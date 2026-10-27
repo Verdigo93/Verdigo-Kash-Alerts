@@ -228,13 +228,13 @@ def next_closings(chat, markets, now=None):
     within_two_hours = [m for m in upcoming if m["close"] - now <= 7200]
     if not within_two_hours:
         minutes = max(1, round((upcoming[0]["close"] - now) / 60))
-        send(chat, f"⏰ No markets freeze within the next 2 hours.\\n"
+        send(chat, f"⏰ No markets freeze within the next 2 hours.\n"
              f"Next market freezes in about {minutes} minutes.")
         return
     for m in within_two_hours[:5]:
         minutes = max(1, round((m["close"] - now) / 60))
         send(chat, market_message(m, "⏰ <b>Upcoming Trade Freeze</b>",
-                                  f"Time until trading stops: about {minutes} min\\n"
+                                  f"Time until trading stops: about {minutes} min\n"
                                   "(Manual preview — not an automatic alert)"), m)
 
 
