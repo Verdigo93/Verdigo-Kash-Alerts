@@ -56,5 +56,40 @@ class BotTests(unittest.TestCase):
         send.assert_called_once()
         self.assertIn("30 minutes", send.call_args.args[1])
 
+    def test_late_discovery_sends_one_nearest_threshold_then_15(self):
+        freeze = dt.datetime(2099, 5, 1, 16, 30, tzinfo=dt.timezone.utc).timestamp()
+        markets = {ID1: bot.normalize(sample_market(ID1))}
+        cfg = {"thresholds": [15, 30, 60], "volume": False,
+               "activity": False, "min_volume": 10000, "paused": False}
+        state = {"users": {"123": cfg}, "sent": {}, "history": {}, "offset": 0}
+        with patch.object(bot, "send") as send:
+            bot.scan(state, markets, freeze - 25 * 60)
+            bot.scan(state, markets, freeze - 24 * 60)
+            self.assertEqual(send.call_count, 1)
+            self.assertIn("Alert: 30 minutes", send.call_args.args[1])
+            bot.scan(state, markets, freeze - 14 * 60)
+            bot.scan(state, markets, freeze - 13 * 60)
+            self.assertEqual(send.call_count, 2)
+            self.assertIn("Alert: 15 minutes", send.call_args.args[1])
+
+    def test_soon_preview_no_markets_within_two_hours(self):
+        freeze = dt.datetime(2099, 5, 1, 16, 30, tzinfo=dt.timezone.utc).timestamp()
+        markets = {ID1: bot.normalize(sample_market(ID1))}
+        with patch.object(bot, "send") as send:
+            bot.next_closings("123", markets, now=freeze - 3 * 3600)
+        send.assert_called_once()
+        self.assertIn("No markets freeze within the next 2 hours",
+                      send.call_args.args[1])
+
+    def test_soon_preview_lists_nearby_markets(self):
+        freeze = dt.datetime(2099, 5, 1, 16, 30, tzinfo=dt.timezone.utc).timestamp()
+        markets = {ID1: bot.normalize(sample_market(ID1))}
+        with patch.object(bot, "send") as send:
+            bot.next_closings("123", markets, now=freeze - 40 * 60)
+        send.assert_called_once()
+        self.assertIn("40 min", send.call_args.args[1])
+        self.assertEqual(send.call_args.args[2]["url"],
+                         "https://app.kash.bot/markets/" + ID1)
+
 if __name__ == "__main__":
     unittest.main()
