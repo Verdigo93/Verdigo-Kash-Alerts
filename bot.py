@@ -1,4 +1,4 @@
-"""Verdigo Kash Alerts v0.3 — English-only, multi-user Telegram alerts.
+"""Verdigo Kash Alerts v0.4 — English-only, multi-user Telegram alerts.
 Python 3.11+; standard library only. No trading endpoints or wallet access.
 """
 import datetime as dt
@@ -23,7 +23,7 @@ def http_json(url, params=None, payload=None, headers=None):
     if params:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     body = None if payload is None else json.dumps(payload).encode("utf-8")
-    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.3"}
+    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.4"}
     if body is not None:
         h["Content-Type"] = "application/json"
     h.update(headers or {})
@@ -188,6 +188,7 @@ def settings_keyboard(cfg):
         [{"text": ("✅" if cfg["volume"] else "⬜") + " High Volume", "callback_data": "toggle:volume"}],
         [{"text": ("✅" if cfg["activity"] else "⬜") + " Unusual Activity", "callback_data": "toggle:activity"}],
         [{"text": "▶️ Resume" if cfg["paused"] else "⏸ Pause", "callback_data": "toggle:pause"}],
+        [{"text": "⏰ Next Closings", "callback_data": "soon"}],
         [{"text": "📊 Top Markets", "callback_data": "top"}],
     ]
 
@@ -212,6 +213,30 @@ def top_markets(chat, markets):
     for m in ranked:
         send(chat, market_message(m, "📊 <b>Top Volume Market</b>",
                                   f"Reported volume: {m['volume']:,.0f}"), m)
+
+def next_closings(chat, markets, now=None):
+    """Show the nearest real trade-freeze times, without false alerts."""
+    now = time.time() if now is None else now
+    upcoming = sorted(
+        (m for m in markets.values() if m.get("close") is not None
+         and m["close"] > now and m.get("url")),
+        key=lambda m: m["close"],
+    )
+    if not upcoming:
+        send(chat, "⏰ No upcoming trade freezes are currently available.")
+        return
+    within_two_hours = [m for m in upcoming if m["close"] - now <= 7200]
+    if not within_two_hours:
+        minutes = max(1, round((upcoming[0]["close"] - now) / 60))
+        send(chat, f"⏰ No markets freeze within the next 2 hours.\\n"
+             f"Next market freezes in about {minutes} minutes.")
+        return
+    for m in within_two_hours[:5]:
+        minutes = max(1, round((m["close"] - now) / 60))
+        send(chat, market_message(m, "⏰ <b>Upcoming Trade Freeze</b>",
+                                  f"Time until trading stops: about {minutes} min\\n"
+                                  "(Manual preview — not an automatic alert)"), m)
+
 
 def command(chat, text, state, markets):
     name = text.strip().split()[0].split("@")[0].lower()
@@ -245,6 +270,8 @@ def command(chat, text, state, markets):
             send(chat, "Usage: /minvolume 10000")
     elif name == "/top":
         top_markets(chat, markets)
+    elif name == "/soon":
+        next_closings(chat, markets)
     elif name == "/status":
         send(chat, f"📡 <b>Monitoring Status</b>\n"
              f"Markets in latest scan: {len(markets)}\n"
@@ -264,6 +291,9 @@ def toggle(chat, action, state, markets):
     elif action == "top":
         top_markets(chat, markets)
         return
+    elif action == "soon":
+        next_closings(chat, markets)
+        return
     show_settings(chat, state)
 
 def scan(state, markets, now):
@@ -276,14 +306,21 @@ def scan(state, markets, now):
             prefix = chat + ":" + m["id"]
             if m["close"] is not None:
                 remaining = (m["close"] - now) / 60
-                for threshold in cfg["thresholds"]:
+                # Catch up on missed scan windows without issuing multiple stale
+                # threshold alerts: pick the closest configured threshold.
+                eligible = sorted(t for t in set(cfg["thresholds"])
+                                  if 0 < remaining <= t)
+                if eligible:
+                    threshold = eligible[0]
                     event = f"{prefix}:closing:{threshold}"
-                    # One alert per threshold; avoid multiple on first discovery.
-                    if 0 < remaining <= threshold and remaining > threshold - 2 and event not in state["sent"]:
+                    if event not in state["sent"]:
                         send(chat, market_message(m, "⏰ <b>Market Closing Soon!</b>",
                              f"Time remaining: {max(1, round(remaining))} min\n"
                              f"Alert: {threshold} minutes"), m)
-                        state["sent"][event] = now
+                        # Larger alerts have already been missed: do not send
+                        # them later after a restart or a brief API outage.
+                        for t in eligible:
+                            state["sent"][f"{prefix}:closing:{t}"] = now
             old = state["history"].get(m["id"])
             if (cfg["volume"] and old and m["volume"] is not None and
                     old["volume"] < cfg["min_volume"] <= m["volume"]):
