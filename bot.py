@@ -365,7 +365,7 @@ def show_settings(chat, state):
 
 def market_message(m, header, details):
     """Emphasize the market question with safe HTML and readable spacing."""
-    return f"{header}\n\n❗ <b>{html.escape(m['title'])}</b> ❗\n\n{details}"
+    return f"{header}\n\n📌 <b>{html.escape(m['title'])}</b>\n\n{details}"
 
 TOP_LIMITS = (5, 10, 15, 20)
 TOP_PAGE_SIZE = 5
@@ -503,7 +503,7 @@ def next_closings(chat, markets, now=None):
     for m in within_two_hours[:5]:
         minutes = max(1, round((m["close"] - now) / 60))
         send(chat, market_message(m, "⏰ <b>Upcoming Trade Freeze</b>",
-                                  f"⏳ Time until trading stops: about {minutes} min\n\n"
+                                  f"❗ <b>Time until trading stops: about {minutes} min</b> ❗\n\n"
                                   "<i>Manual preview — not an automatic alert</i>"), m)
 
 
@@ -606,7 +606,7 @@ def scan(state, markets, now):
                     event = f"{prefix}:closing:{threshold}"
                     if event not in state["sent"]:
                         send(chat, market_message(m, "⏰ <b>Market Closing Soon!</b>",
-                             f"⏳ Time remaining: {max(1, round(remaining))} min\n\n"
+                             f"❗ <b>Time remaining: {max(1, round(remaining))} min</b> ❗\n\n"
                              f"🔔 Alert: {threshold} minutes"), m)
                         # Larger alerts have already been missed: do not send
                         # them later after a restart or a brief API outage.
