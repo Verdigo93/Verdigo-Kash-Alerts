@@ -3,6 +3,8 @@
 An English-language Telegram bot for tracking Kash prediction markets (read-only).
 
 ## Features
+- Next Closings button and /soon command show upcoming trading freezes within two hours
+- Improved closing alerts catch missed scan windows without sending several outdated reminders
 - Personal 15 / 30 / 60 minute alerts before Kash's `freezeAt` (last trading time)
 - High-volume threshold-crossing alerts and unusual volume-change alerts
 - Direct links to market pages on `app.kash.bot/markets/<UUID>`
@@ -15,7 +17,7 @@ An English-language Telegram bot for tracking Kash prediction markets (read-only
 1. Download ZIP from this repository (Code → Download ZIP), then extract.
 2. Double-click `START_LOCAL.cmd`.
 3. Paste your **BotFather Telegram token** and **read-only Kash API key** in the two private pop-up dialogs. These values are not saved to disk.
-4. Open [@VerdigoKashAlertsBot](https://t.me/VerdigoKashAlertsBot) in Telegram, send `/start`, and then `/status` or `/top`.
+4. Open [@VerdigoKashAlertsBot](https://t.me/VerdigoKashAlertsBot) in Telegram, send `/start`, and then `/soon`, `/status`, or `/top`.
 5. Keep the command window open while testing. Close it to stop the bot.
 
 Never paste keys into GitHub, Telegram chats, screenshots, or the Windows command line. Kash key only needs `markets:read`.
