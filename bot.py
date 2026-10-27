@@ -1,4 +1,4 @@
-"""Verdigo Kash Alerts v0.6 — English-only, multi-user Telegram alerts.
+"""Verdigo Kash Alerts v0.7 — English-only, multi-user Telegram alerts.
 Python 3.11+; standard library only. No trading endpoints or wallet access.
 """
 import datetime as dt
@@ -25,7 +25,7 @@ def http_json(url, params=None, payload=None, headers=None):
     if params:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     body = None if payload is None else json.dumps(payload).encode("utf-8")
-    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.6"}
+    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.7"}
     if body is not None:
         h["Content-Type"] = "application/json"
     h.update(headers or {})
@@ -38,7 +38,8 @@ def telegram(method, data):
 
 def defaults():
     return {"thresholds": [15, 30, 60], "volume": True, "activity": True,
-            "min_volume": 10000, "max_volume": None, "paused": False}
+            "min_volume": 10000, "max_volume": None, "paused": False,
+            "top_limit": 5}
 
 def load():
     try:
@@ -365,16 +366,121 @@ def show_settings(chat, state):
 def market_message(m, header, details):
     return f"{header}\n\n<b>{html.escape(m['title'])}</b>\n{details}"
 
-def top_markets(chat, markets):
-    ranked = sorted((m for m in markets.values() if m["url"] and m["volume"] is not None),
-                    key=lambda m: m["volume"], reverse=True)[:5]
+TOP_LIMITS = (5, 10, 15, 20)
+TOP_PAGE_SIZE = 5
+
+
+def top_size_keyboard(selected):
+    return [
+        [{"text": ("✅ " if n == selected else "") + f"Top {n}",
+          "callback_data": f"top:set:{n}"} for n in (5, 10)],
+        [{"text": ("✅ " if n == selected else "") + f"Top {n}",
+          "callback_data": f"top:set:{n}"} for n in (15, 20)],
+        [{"text": "🏠 Main Menu", "callback_data": "menu"}],
+    ]
+
+
+def edit_bot_message(chat, message_id, text, keyboard):
+    """Replace an existing Telegram result in-place instead of spamming chats."""
+    telegram("editMessageText", {
+        "chat_id": chat,
+        "message_id": message_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+        "reply_markup": {"inline_keyboard": keyboard},
+    })
+
+
+def top_menu(chat, state, message_id=None):
+    cfg = user(state, chat)
+    selected = cfg.get("top_limit", 5)
+    if selected not in TOP_LIMITS:
+        selected = 5
+    text = ("📊 <b>Top Markets by Volume</b>\n\n"
+            f"Choose how many markets to see (current: Top {selected}).\n"
+            "Results are shown 5 at a time so your chat stays clean.\n"
+            "Volume is total reported market volume in USDC.")
+    keyboard = top_size_keyboard(selected)
+    if message_id is not None:
+        edit_bot_message(chat, message_id, text, keyboard)
+    else:
+        send(chat, text, keyboard=keyboard)
+
+
+def top_page_content(markets, limit, page):
+    """Create a bounded, clickable list of market rankings in one Telegram message."""
+    if limit not in TOP_LIMITS:
+        limit = 5
+    ranked = sorted(
+        (m for m in markets.values()
+         if m.get("url") and m.get("volume") is not None),
+        key=lambda m: m["volume"], reverse=True
+    )[:limit]
+    max_page = max(0, (len(ranked) - 1) // TOP_PAGE_SIZE)
+    page = min(max(0, page), max_page)
+    total_pages = max_page + 1
     if not ranked:
-        send(chat, "No verified market links and volume data are available yet.",
-             keyboard=[[{"text": "🏠 Main Menu", "callback_data": "menu"}]])
-        return
-    for m in ranked:
-        send(chat, market_message(m, "📊 <b>Top Volume Market</b>",
-                                  f"Reported volume: {m['volume']:,.0f}"), m)
+        text = ("📊 <b>Top Markets by Volume</b>\n\n"
+                "No market volume data is available right now. Try again later.")
+    else:
+        start = page * TOP_PAGE_SIZE
+        lines = []
+        for pos, m in enumerate(ranked[start:start + TOP_PAGE_SIZE], start + 1):
+            title = str(m.get("title") or "Untitled market")
+            if len(title) > 135:
+                title = title[:132] + "..."
+            safe_title = html.escape(title)
+            safe_url = html.escape(m["url"], quote=True)
+            lines.append(f'{pos}. <a href="{safe_url}">{safe_title}</a>\n'
+                         f"    💰 {m['volume']:,.2f} USDC")
+        text = (f"📊 <b>Top {limit} Markets by Volume</b>\n"
+                f"Showing {start + 1}–{start + len(lines)} of {len(ranked)} available "
+                f"| Page {page + 1}/{total_pages}\n\n"
+                + "\n\n".join(lines))
+    nav = []
+    if page > 0:
+        nav.append({"text": "⬅️ Previous", "callback_data": f"top:page:{page - 1}"})
+    if page < max_page:
+        nav.append({"text": "Next ➡️", "callback_data": f"top:page:{page + 1}"})
+    keyboard = []
+    if nav:
+        keyboard.append(nav)
+    keyboard.append([{"text": "⚙️ Choose Top 5 / 10 / 15 / 20",
+                      "callback_data": "top:choose"}])
+    keyboard.append([{"text": "🏠 Main Menu", "callback_data": "menu"}])
+    return text, keyboard
+
+
+def top_page(chat, state, markets, page=0, message_id=None):
+    cfg = user(state, chat)
+    text, keyboard = top_page_content(markets, cfg.get("top_limit", 5), page)
+    if message_id is not None:
+        edit_bot_message(chat, message_id, text, keyboard)
+    else:
+        send(chat, text, keyboard=keyboard)
+
+
+def top_action(chat, action, state, markets, message_id):
+    cfg = user(state, chat)
+    if action == "choose":
+        top_menu(chat, state, message_id)
+    elif action.startswith("set:"):
+        count_text = action.split(":", 1)[1]
+        if count_text in ("5", "10", "15", "20"):
+            cfg["top_limit"] = int(count_text)
+            top_page(chat, state, markets, 0, message_id)
+    elif action.startswith("page:"):
+        page_text = action.split(":", 1)[1]
+        if page_text.isdigit() and len(page_text) <= 2:
+            top_page(chat, state, markets, int(page_text), message_id)
+
+
+def top_markets(chat, markets, state=None):
+    """Compatibility for existing commands and old inline menus."""
+    if state is None:
+        state = {"users": {}}
+    top_menu(chat, state)
 
 def next_closings(chat, markets, now=None):
     """Show the nearest real trade-freeze times, without false alerts."""
@@ -442,7 +548,11 @@ def command(chat, text, state, markets):
         except (IndexError, ValueError):
             send(chat, "Usage: /minvolume 10000")
     elif name == "/top":
-        top_markets(chat, markets)
+        if len(parts) > 1 and parts[1] in ("5", "10", "15", "20"):
+            cfg["top_limit"] = int(parts[1])
+            top_page(chat, state, markets)
+        else:
+            top_menu(chat, state)
     elif name == "/markets":
         volume_markets(chat, state, markets)
     elif name == "/soon":
@@ -464,7 +574,7 @@ def toggle(chat, action, state, markets):
     elif action == "pause":
         cfg["paused"] = not cfg["paused"]
     elif action == "top":
-        top_markets(chat, markets)
+        top_menu(chat, state)
         return
     elif action == "soon":
         next_closings(chat, markets)
@@ -596,7 +706,12 @@ def main():
                     elif cb_chat and callback.get("data", "").startswith("vol:"):
                         volume_action(cb_chat, callback["data"].split(":", 1)[1], state, markets)
                     elif cb_chat and callback.get("data") == "top":
-                        top_markets(cb_chat, markets)
+                        top_menu(cb_chat, state)
+                    elif cb_chat and callback.get("data", "").startswith("top:"):
+                        msg_id = (callback.get("message") or {}).get("message_id")
+                        if isinstance(msg_id, int):
+                            top_action(cb_chat, callback["data"].split(":", 1)[1],
+                                       state, markets, msg_id)
                     elif cb_chat and callback.get("data") == "soon":
                         next_closings(cb_chat, markets)
                     elif cb_chat and callback.get("data") == "menu":
