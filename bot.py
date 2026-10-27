@@ -1,4 +1,4 @@
-"""Verdigo Kash Alerts v0.4 — English-only, multi-user Telegram alerts.
+"""Verdigo Kash Alerts v0.5 — English-only, multi-user Telegram alerts.
 Python 3.11+; standard library only. No trading endpoints or wallet access.
 """
 import datetime as dt
@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -23,7 +24,7 @@ def http_json(url, params=None, payload=None, headers=None):
     if params:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     body = None if payload is None else json.dumps(payload).encode("utf-8")
-    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.4"}
+    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.5"}
     if body is not None:
         h["Content-Type"] = "application/json"
     h.update(headers or {})
@@ -36,7 +37,7 @@ def telegram(method, data):
 
 def defaults():
     return {"thresholds": [15, 30, 60], "volume": True, "activity": True,
-            "min_volume": 10000, "paused": False}
+            "min_volume": 10000, "max_volume": None, "paused": False}
 
 def load():
     try:
@@ -45,7 +46,8 @@ def load():
             return data
     except (OSError, ValueError):
         pass
-    return {"users": {}, "sent": {}, "history": {}, "offset": 0}
+    return {"users": {}, "sent": {}, "history": {}, "offset": 0,
+            "seen_volume_markets": {}, "volume_baseline_ready": False}
 
 def save(state):
     STATE.parent.mkdir(parents=True, exist_ok=True)
@@ -181,11 +183,160 @@ def send(chat, message, market=None, keyboard=None):
         data["reply_markup"] = {"inline_keyboard": keyboard}
     telegram("sendMessage", data)
 
+
+def volume_matches(volume, cfg):
+    """Match reported *total market volume* in USDC, not individual bet size."""
+    if volume is None:
+        return False
+    minimum = cfg.get("min_volume", 10000)
+    maximum = cfg.get("max_volume")
+    return volume >= minimum and (maximum is None or volume < maximum)
+
+
+def volume_label(cfg):
+    minimum = cfg.get("min_volume", 10000)
+    maximum = cfg.get("max_volume")
+
+    def fmt(value):
+        return f"{value:,.2f}".rstrip("0").rstrip(".") if isinstance(value, float) else f"{value:,}"
+
+    if maximum is None:
+        return "All volumes" if minimum == 0 else f"From \${fmt(minimum)} USDC"
+    if minimum == 0:
+        return f"Under \${fmt(maximum)} USDC"
+    return f"\${fmt(minimum)}–\${fmt(maximum)} USDC"
+
+
+def volume_keyboard():
+    return [
+        [{"text": "⬇️ Under $10", "callback_data": "vol:under10"},
+         {"text": "💵 $10–$100", "callback_data": "vol:10to100"}],
+        [{"text": "📈 $100+", "callback_data": "vol:100plus"},
+         {"text": "🚀 $1,000+", "callback_data": "vol:1000plus"}],
+        [{"text": "💎 $10,000+", "callback_data": "vol:10000plus"},
+         {"text": "🌐 All volumes", "callback_data": "vol:all"}],
+        [{"text": "✏️ Enter custom amount", "callback_data": "vol:custom"}],
+        [{"text": "🔎 Show matching markets", "callback_data": "vol:show"}],
+        [{"text": "◀️ Back to Settings", "callback_data": "vol:back"}],
+    ]
+
+
+def show_volume_menu(chat, state):
+    cfg = user(state, chat)
+    send(chat,
+         "💵 <b>Market Volume Filter</b>\n\n"
+         f"Current: <b>{html.escape(volume_label(cfg))}</b>\n\n"
+         "Choose a range or enter your own amount. "
+         "This filters market-volume notifications and the "
+         "🔎 Show matching markets list.\n"
+         "⏰ Closing-time alerts are <b>not</b> filtered.\n\n"
+         "Volume means the market's total reported trading volume in USDC, "
+         "not the size of one trade.",
+         keyboard=volume_keyboard())
+
+
+def volume_markets(chat, state, markets):
+    cfg = user(state, chat)
+    selected = sorted(
+        (m for m in markets.values() if m.get("url") and volume_matches(m.get("volume"), cfg)),
+        key=lambda m: m["volume"], reverse=True,
+    )
+    if not selected:
+        send(chat, f"🔎 No active markets currently match {html.escape(volume_label(cfg))}.")
+        return
+    send(chat, f"🔎 <b>Markets: {html.escape(volume_label(cfg))}</b>\n"
+         f"Matches: {len(selected)} | Showing up to 5:")
+    for m in selected[:5]:
+        send(chat, market_message(m, "💵 <b>Matching Market</b>",
+                                  f"Total volume: \${m['volume']:,.2f} USDC"), m)
+
+
+def parse_volume_range(raw):
+    """Accepted examples: 100, 100+, >100, <10, 10-100, all."""
+    value = raw.strip().lower().replace("usdc", "").replace("$", "").replace(",", "").replace(" ", "")
+    if value == "all":
+        return 0, None
+    if not re.fullmatch(r"(?:<|>)?\d+(?:\.\d+)?\+?(?:-\d+(?:\.\d+)?)?", value):
+        raise ValueError("Use 100, 100+, <10, 10-100 or all.")
+    if "-" in value:
+        parts = value.split("-")
+        minimum, maximum = float(parts[0]), float(parts[1])
+        if not 0 <= minimum < maximum <= 1_000_000_000:
+            raise ValueError("The range must have a larger maximum (up to 1B USDC).")
+        return minimum, maximum
+    if value.startswith("<"):
+        maximum = float(value[1:])
+        if not 0 < maximum <= 1_000_000_000:
+            raise ValueError("The maximum must be above zero.")
+        return 0, maximum
+    minimum = float(value.strip(">+"))
+    if not 0 <= minimum <= 1_000_000_000:
+        raise ValueError("Amount must be between 0 and 1B USDC.")
+    return minimum, None
+
+
+def handle_volume_reply(chat, message, state):
+    cfg = user(state, chat)
+    if not cfg.get("awaiting_volume"):
+        return False
+    if message.strip().lower() in ("cancel", "/cancel"):
+        cfg["awaiting_volume"] = False
+        show_volume_menu(chat, state)
+        return True
+    try:
+        minimum, maximum = parse_volume_range(message)
+    except ValueError as exc:
+        send(chat, f"❌ {html.escape(str(exc))}\n"
+             "Try: 100, 100+, <10 or 10-100. Send cancel to exit.")
+        return True
+    cfg["min_volume"] = minimum
+    cfg["max_volume"] = maximum
+    cfg["awaiting_volume"] = False
+    send(chat, f"✅ Volume filter saved: {html.escape(volume_label(cfg))}")
+    show_volume_menu(chat, state)
+    return True
+
+
+def volume_action(chat, action, state, markets):
+    cfg = user(state, chat)
+    presets = {
+        "under10": (0, 10),
+        "10to100": (10, 100),
+        "100plus": (100, None),
+        "1000plus": (1000, None),
+        "10000plus": (10000, None),
+        "all": (0, None),
+    }
+    if action in presets:
+        cfg["min_volume"], cfg["max_volume"] = presets[action]
+        cfg["awaiting_volume"] = False
+        send(chat, f"✅ Volume filter saved: {html.escape(volume_label(cfg))}")
+        show_volume_menu(chat, state)
+    elif action == "custom":
+        cfg["awaiting_volume"] = True
+        send(chat,
+             "✏️ <b>Enter market volume (USDC)</b>\n\n"
+             "Just send a normal message, for example:\n"
+             "• <code>100</code> — from 100 USDC\n"
+             "• <code>&lt;10</code> — under 10 USDC\n"
+             "• <code>10-100</code> — 10 to under 100 USDC\n"
+             "• <code>100+</code> — from 100 USDC\n\n"
+             "Send <code>cancel</code> to return. No slash commands needed.")
+    elif action == "show":
+        volume_markets(chat, state, markets)
+    elif action == "back":
+        cfg["awaiting_volume"] = False
+        show_settings(chat, state)
+    elif action == "menu":
+        show_volume_menu(chat, state)
+
+
 def settings_keyboard(cfg):
     return [
         [{"text": ("✅" if n in cfg["thresholds"] else "⬜") + f" {n} min",
           "callback_data": f"toggle:{n}"} for n in (15, 30, 60)],
-        [{"text": ("✅" if cfg["volume"] else "⬜") + " High Volume", "callback_data": "toggle:volume"}],
+        [{"text": ("✅" if cfg["volume"] else "⬜") + " Volume Alerts", "callback_data": "toggle:volume"}],
+        [{"text": "💵 Volume Filter", "callback_data": "vol:menu"}],
         [{"text": ("✅" if cfg["activity"] else "⬜") + " Unusual Activity", "callback_data": "toggle:activity"}],
         [{"text": "▶️ Resume" if cfg["paused"] else "⏸ Pause", "callback_data": "toggle:pause"}],
         [{"text": "⏰ Next Closings", "callback_data": "soon"}],
@@ -196,8 +347,8 @@ def show_settings(chat, state):
     cfg = user(state, chat)
     send(chat, "⚙️ <b>Verdigo Kash Alerts — Settings</b>\n\n"
          "Choose your closing alerts and market activity notifications.\n"
-         f"Minimum reported volume: {cfg['min_volume']:,.0f}\n"
-         "Change minimum with /minvolume 10000\n\n"
+         f"Volume range: {html.escape(volume_label(cfg))}\n"
+         "Change it using 💵 Volume Filter.\n\n"
          "Alerts are informational, not trading advice.",
          keyboard=settings_keyboard(cfg))
 
@@ -248,6 +399,8 @@ def command(chat, text, state, markets):
         show_settings(chat, state)
     elif name in ("/settings", "/help"):
         show_settings(chat, state)
+    elif name in ("/filter", "/volumerange"):
+        show_volume_menu(chat, state)
     elif name in ("/15", "/30", "/60"):
         n = int(name[1:])
         cfg["thresholds"] = sorted(set(cfg["thresholds"]) ^ {n})
@@ -265,11 +418,15 @@ def command(chat, text, state, markets):
             if not 0 <= value <= 1000000000:
                 raise ValueError()
             cfg["min_volume"] = value
+            cfg["max_volume"] = None
+            cfg["awaiting_volume"] = False
             show_settings(chat, state)
         except (IndexError, ValueError):
             send(chat, "Usage: /minvolume 10000")
     elif name == "/top":
         top_markets(chat, markets)
+    elif name == "/markets":
+        volume_markets(chat, state, markets)
     elif name == "/soon":
         next_closings(chat, markets)
     elif name == "/status":
@@ -297,7 +454,10 @@ def toggle(chat, action, state, markets):
     show_settings(chat, state)
 
 def scan(state, markets, now):
+    seen_volumes = state.setdefault("seen_volume_markets", {})
+    volume_baseline_ready = state.get("volume_baseline_ready", False)
     for chat, cfg in list(state["users"].items()):
+        volume_alerts_this_scan = 0
         if cfg.get("paused"):
             continue
         for m in markets.values():
@@ -322,13 +482,22 @@ def scan(state, markets, now):
                         for t in eligible:
                             state["sent"][f"{prefix}:closing:{t}"] = now
             old = state["history"].get(m["id"])
-            if (cfg["volume"] and old and m["volume"] is not None and
-                    old["volume"] < cfg["min_volume"] <= m["volume"]):
-                event = f"{prefix}:volume:{cfg['min_volume']}"
+            in_range = volume_matches(m["volume"], cfg)
+            crossed_into_range = (old is not None and
+                                  not volume_matches(old["volume"], cfg) and in_range)
+            newly_seen_matching = (volume_baseline_ready and
+                                   m["id"] not in seen_volumes and in_range)
+            if (cfg.get("volume", True) and
+                    (crossed_into_range or newly_seen_matching) and
+                    volume_alerts_this_scan < 5):
+                band = f"{cfg.get('min_volume',10000)}:{cfg.get('max_volume')}"
+                event = f"{prefix}:volume:{band}"
                 if event not in state["sent"]:
-                    send(chat, market_message(m, "💰 <b>High Volume Market</b>",
-                         f"Reported volume: {m['volume']:,.0f}"), m)
+                    send(chat, market_message(m, "💰 <b>Market Matches Your Volume Filter</b>",
+                         f"Total volume: ${m['volume']:,.2f} USDC\n"
+                         f"Your range: {html.escape(volume_label(cfg))}"), m)
                     state["sent"][event] = now
+                    volume_alerts_this_scan += 1
             if cfg["activity"] and old and m["volume"] is not None:
                 age = now - old["at"]
                 delta = m["volume"] - old["volume"]
@@ -338,14 +507,17 @@ def scan(state, markets, now):
                         send(chat, market_message(m, "🔥 <b>Unusual Volume Increase</b>",
                              f"Volume increase since previous snapshot: +{delta:,.0f}"), m)
                         state["sent"][event] = now
-    # Update history once per scan, not once per user.
+    # Update history and first-seen data once per scan, not per user.
     for m in markets.values():
         if m["volume"] is not None:
+            seen_volumes[m["id"]] = now
             old = state["history"].get(m["id"])
             if old is None or now - old["at"] >= 300:
                 state["history"][m["id"]] = {"volume": m["volume"], "at": now}
     state["sent"] = {k: v for k, v in state["sent"].items() if now - v < 3 * 86400}
     state["history"] = {k: v for k, v in state["history"].items() if now - v["at"] < 2 * 86400}
+    state["seen_volume_markets"] = {k: v for k, v in seen_volumes.items() if now - v < 7 * 86400}
+    state["volume_baseline_ready"] = True
 
 def main():
     if not TOKEN:
@@ -373,14 +545,23 @@ def main():
                 state["offset"] = max(state["offset"], update["update_id"] + 1)
                 message = update.get("message") or {}
                 chat = (message.get("chat") or {}).get("id")
-                if chat and str(message.get("text", "")).startswith("/"):
-                    command(chat, message["text"], state, markets)
+                if chat and isinstance(message.get("text"), str):
+                    incoming = message["text"]
+                    cfg = user(state, chat)
+                    if incoming.strip().lower() == "/cancel" and cfg.get("awaiting_volume"):
+                        handle_volume_reply(chat, "cancel", state)
+                    elif incoming.startswith("/"):
+                        command(chat, incoming, state, markets)
+                    else:
+                        handle_volume_reply(chat, incoming, state)
                 callback = update.get("callback_query") or {}
                 if callback:
                     telegram("answerCallbackQuery", {"callback_query_id": callback["id"]})
                     cb_chat = ((callback.get("message") or {}).get("chat") or {}).get("id")
                     if cb_chat and callback.get("data", "").startswith("toggle:"):
                         toggle(cb_chat, callback["data"].split(":", 1)[1], state, markets)
+                    elif cb_chat and callback.get("data", "").startswith("vol:"):
+                        volume_action(cb_chat, callback["data"].split(":", 1)[1], state, markets)
                     elif cb_chat and callback.get("data") == "top":
                         top_markets(cb_chat, markets)
             save(state)
