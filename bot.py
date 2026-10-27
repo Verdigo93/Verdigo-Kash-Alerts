@@ -18,6 +18,7 @@ KASH_API = os.environ.get("KASH_MARKETS_API", "https://api.kash.bot/v1/markets")
 KASH_KEY = os.environ.get("KASH_API_KEY", "").strip()
 STATE = pathlib.Path(os.environ.get("STATE_FILE", "data/state.json"))
 POLL = max(60, int(os.environ.get("POLL_SECONDS", "60")))
+_LAST_CHAT_SEND = {}
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 def http_json(url, params=None, payload=None, headers=None):
@@ -174,6 +175,13 @@ def enrich_with_market_state(markets):
             logging.warning("Volume enrichment unavailable (closing alerts still work): %s", exc)
 
 def send(chat, message, market=None, keyboard=None):
+    # Telegram may throttle several sendMessage requests to the same chat.
+    # Top Markets sends five messages; pace them instead of risking HTTP 429.
+    chat_key = str(chat)
+    next_allowed = _LAST_CHAT_SEND.get(chat_key, 0.0)
+    remaining = next_allowed - time.monotonic()
+    if remaining > 0:
+        time.sleep(remaining)
     data = {"chat_id": chat, "text": message, "parse_mode": "HTML",
             "disable_web_page_preview": True}
     if market and market.get("url"):
@@ -183,6 +191,7 @@ def send(chat, message, market=None, keyboard=None):
     elif keyboard:
         data["reply_markup"] = {"inline_keyboard": keyboard}
     telegram("sendMessage", data)
+    _LAST_CHAT_SEND[chat_key] = time.monotonic() + 1.1
 
 
 def volume_matches(volume, cfg):
@@ -392,7 +401,10 @@ def next_closings(chat, markets, now=None):
 
 
 def command(chat, text, state, markets):
-    name = text.strip().split()[0].split("@")[0].lower()
+    parts = text.strip().split()
+    if not parts:
+        return
+    name = parts[0].split("@")[0].lower()
     cfg = user(state, chat)
     if name == "/start":
         send(chat, "👋 <b>Welcome to Verdigo Kash Alerts!</b>\n\n"
