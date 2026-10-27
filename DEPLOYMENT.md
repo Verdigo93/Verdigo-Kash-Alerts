@@ -15,6 +15,23 @@
 - REST market-list endpoint has no volume fields. Public read-only endpoint https://app.kash.bot/api/markets/state?ids=<comma separated UUIDs> returns totalVolume in atomic USDC (6 decimal places). Uses at most 200 IDs per request. If it fails, closing alerts continue.
 - Local authenticated HTTP 200 and five returned markets were confirmed by the project owner on October 27, 2026. The owner also confirmed receiving a real automated Telegram freeze-time notification and opening linked markets. Volume range UI in v0.5 still requires manual verification.
 
+## Altare / Pterodactyl Python hosting (private test setup)
+
+1. Use the **Generic - Python** image. Place the latest `bot.py` inside `/home/container/`.
+2. In Startup > Variables, set `PY_FILE` to `bot.py`. Leave the default startup shell command unchanged.
+3. In the server file manager, create `data/`. Add `data/secrets.json` **privately on the server**, with the following two keys (replace placeholders in the private editor, not in GitHub or chat):
+   ```json
+   {
+     "TELEGRAM_BOT_TOKEN": "REPLACE_WITH_PRIVATE_BOTFATHER_TOKEN",
+     "KASH_API_KEY": "REPLACE_WITH_PRIVATE_KASH_MARKETS_READ_KEY"
+   }
+   ```
+4. Stop the previous local Telegram bot before moving to the cloud (only one polling process per token). Copy the latest local `data/state.json` to server `data/state.json` so subscribers/settings/dedup history persist. Never put that file in GitHub.
+5. Start the server and verify the log prints a market count and subscriber count; test `/ping` and `/settings` in Telegram. The token is not printed in the logs.
+6. Keep `data/` persistent across host restarts/reinstalls; enable backups where possible. Hosting admins can access files on their infrastructure, so use dedicated, least-privilege credentials and rotate if the host cannot be trusted.
+
+Environment variables `TELEGRAM_BOT_TOKEN` and `KASH_API_KEY` take priority over private `data/secrets.json`. Never paste secrets into the public repo, command line, screenshots, or chat. The file is loaded by `bot.py` using only the standard library; no pip packages are needed.
+
 ## 24/7 hosting (not yet deployed)
 - One continuously running instance only, as Telegram long polling conflicts with multiple workers.
 - Environment variables TELEGRAM_BOT_TOKEN and KASH_API_KEY are **host secrets**; never store them in source control.
