@@ -90,8 +90,17 @@ def normalize(item):
     if url and url.startswith("/"):
         url = "https://app.kash.bot" + url
     parsed = urllib.parse.urlparse(url or "")
-    if parsed.scheme != "https" or parsed.netloc != "app.kash.bot" or not parsed.path.startswith("/"):
+    if parsed.scheme != "https" or parsed.netloc != "app.kash.bot" or not parsed.path.startswith("/markets/"):
         url = None
+    # Kash market pages use /markets/<UUID>. Construct a link only for a valid UUID.
+    if url is None and market_id:
+        import uuid
+        try:
+            market_uuid = uuid.UUID(market_id)
+            if str(market_uuid) == market_id.lower():
+                url = "https://app.kash.bot/markets/" + str(market_uuid)
+        except ValueError:
+            pass
     return {"id": market_id, "title": title, "close": close, "volume": volume,
             "url": url, "status": str(item.get("status") or "").upper()}
 
