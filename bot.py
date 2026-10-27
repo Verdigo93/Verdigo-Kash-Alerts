@@ -105,7 +105,7 @@ def normalize(item):
             "url": url, "status": str(item.get("status") or "").upper()}
 
 def fetch_markets():
-    headers = {"Authorization": "Bearer " + KASH_KEY} if KASH_KEY else {}
+    headers = {"X-API-Key": KASH_KEY} if KASH_KEY else {}
     result = {}
     cursor = None
     for _ in range(20):
