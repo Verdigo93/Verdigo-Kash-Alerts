@@ -1,4 +1,4 @@
-"""Verdigo Kash Alerts v0.5 — English-only, multi-user Telegram alerts.
+"""Verdigo Kash Alerts v0.6 — English-only, multi-user Telegram alerts.
 Python 3.11+; standard library only. No trading endpoints or wallet access.
 """
 import datetime as dt
@@ -24,7 +24,7 @@ def http_json(url, params=None, payload=None, headers=None):
     if params:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     body = None if payload is None else json.dumps(payload).encode("utf-8")
-    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.5"}
+    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.6"}
     if body is not None:
         h["Content-Type"] = "application/json"
     h.update(headers or {})
@@ -177,8 +177,9 @@ def send(chat, message, market=None, keyboard=None):
     data = {"chat_id": chat, "text": message, "parse_mode": "HTML",
             "disable_web_page_preview": True}
     if market and market.get("url"):
-        data["reply_markup"] = {"inline_keyboard": [[
-            {"text": "🔗 View Market on Kash", "url": market["url"]}]]}
+        data["reply_markup"] = {"inline_keyboard": [
+            [{"text": "🔗 View Market on Kash", "url": market["url"]}],
+            [{"text": "🏠 Main Menu", "callback_data": "menu"}]]}
     elif keyboard:
         data["reply_markup"] = {"inline_keyboard": keyboard}
     telegram("sendMessage", data)
@@ -359,7 +360,8 @@ def top_markets(chat, markets):
     ranked = sorted((m for m in markets.values() if m["url"] and m["volume"] is not None),
                     key=lambda m: m["volume"], reverse=True)[:5]
     if not ranked:
-        send(chat, "No verified market links and volume data are available yet.")
+        send(chat, "No verified market links and volume data are available yet.",
+             keyboard=[[{"text": "🏠 Main Menu", "callback_data": "menu"}]])
         return
     for m in ranked:
         send(chat, market_message(m, "📊 <b>Top Volume Market</b>",
@@ -397,8 +399,12 @@ def command(chat, text, state, markets):
              "Free Kash market monitoring: closing alerts, high volume and activity spikes.\n"
              "No wallet or trading API key required.")
         show_settings(chat, state)
-    elif name in ("/settings", "/help"):
+    elif name in ("/settings", "/help", "/menu", "/home"):
+        cfg["awaiting_volume"] = False
         show_settings(chat, state)
+    elif name == "/ping":
+        send(chat, "🏓 Pong! Verdigo Kash Alerts is responding.",
+             keyboard=[[{"text": "🏠 Main Menu", "callback_data": "menu"}]])
     elif name in ("/filter", "/volumerange"):
         show_volume_menu(chat, state)
     elif name in ("/15", "/30", "/60"):
@@ -451,6 +457,8 @@ def toggle(chat, action, state, markets):
     elif action == "soon":
         next_closings(chat, markets)
         return
+    elif action in ("menu", "home"):
+        cfg["awaiting_volume"] = False
     show_settings(chat, state)
 
 def scan(state, markets, now):
@@ -548,17 +556,28 @@ def main():
                 message = update.get("message") or {}
                 chat = (message.get("chat") or {}).get("id")
                 if chat and isinstance(message.get("text"), str):
-                    incoming = message["text"]
+                    incoming = message["text"].strip()
                     cfg = user(state, chat)
-                    if incoming.strip().lower() == "/cancel" and cfg.get("awaiting_volume"):
+                    name = incoming.casefold()
+                    if name in ("settings", "menu", "home"):
+                        cfg["awaiting_volume"] = False
+                        show_settings(chat, state)
+                    elif name == "start":
+                        cfg["awaiting_volume"] = False
+                        command(chat, "/start", state, markets)
+                    elif name == "/cancel" and cfg.get("awaiting_volume"):
                         handle_volume_reply(chat, "cancel", state)
                     elif incoming.startswith("/"):
                         command(chat, incoming, state, markets)
-                    else:
-                        handle_volume_reply(chat, incoming, state)
+                    elif not handle_volume_reply(chat, incoming, state):
+                        send(chat, "Use /settings to open the main menu.",
+                             keyboard=[[{"text": "🏠 Main Menu", "callback_data": "menu"}]])
                 callback = update.get("callback_query") or {}
                 if callback:
-                    telegram("answerCallbackQuery", {"callback_query_id": callback["id"]})
+                    try:
+                        telegram("answerCallbackQuery", {"callback_query_id": callback["id"]})
+                    except Exception as exc:
+                        logging.warning("Callback acknowledgement failed: %s", exc)
                     cb_chat = ((callback.get("message") or {}).get("chat") or {}).get("id")
                     if cb_chat and callback.get("data", "").startswith("toggle:"):
                         toggle(cb_chat, callback["data"].split(":", 1)[1], state, markets)
@@ -566,9 +585,15 @@ def main():
                         volume_action(cb_chat, callback["data"].split(":", 1)[1], state, markets)
                     elif cb_chat and callback.get("data") == "top":
                         top_markets(cb_chat, markets)
+                    elif cb_chat and callback.get("data") == "soon":
+                        next_closings(cb_chat, markets)
+                    elif cb_chat and callback.get("data") == "menu":
+                        cfg = user(state, cb_chat)
+                        cfg["awaiting_volume"] = False
+                        show_settings(cb_chat, state)
             save(state)
         except Exception as exc:
-            logging.error("Telegram polling error: %s", exc)
+            logging.exception("Telegram polling or message delivery failed: %s", exc)
             time.sleep(5)
 
 if __name__ == "__main__":
