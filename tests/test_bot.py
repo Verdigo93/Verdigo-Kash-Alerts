@@ -160,5 +160,28 @@ class BotTests(unittest.TestCase):
         self.assertIn("Matching Market", send.call_args_list[1].args[1])
         self.assertEqual(send.call_args_list[1].args[2]["id"], ID1)
 
+    def test_alert_readability_and_safe_title(self):
+        m = bot.normalize(sample_market(ID1))
+        m["title"] = "Who wins: Essen & Leipzig <Final>?"
+        formatted = bot.market_message(
+            m, "⏰ <b>Market Closing Soon!</b>",
+            "⏳ Time remaining: 60 min\n\n🔔 Alert: 60 minutes",
+        )
+        self.assertIn("❗ <b>Who wins: Essen &amp; Leipzig &lt;Final&gt;?</b> ❗", formatted)
+        self.assertIn("❗\n\n⏳ Time remaining", formatted)
+        self.assertIn("min\n\n🔔 Alert", formatted)
+
+    def test_live_closing_alert_has_time_spacing(self):
+        freeze = dt.datetime(2099, 5, 1, 16, 30, tzinfo=dt.timezone.utc).timestamp()
+        m = bot.normalize(sample_market(ID1))
+        state = {"users": {"123": {"thresholds": [60], "volume": False,
+                 "activity": False, "min_volume": 10000, "paused": False}},
+                 "sent": {}, "history": {}, "offset": 0}
+        with patch.object(bot, "send") as send:
+            bot.scan(state, {ID1: m}, freeze - 3600)
+        payload = send.call_args.args[1]
+        self.assertIn("❗ <b>A real Kash market?</b> ❗", payload)
+        self.assertIn("⏳ Time remaining: 60 min\n\n🔔 Alert: 60 minutes", payload)
+
 if __name__ == "__main__":
     unittest.main()
