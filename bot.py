@@ -177,7 +177,7 @@ def enrich_with_market_state(markets):
 
 def send(chat, message, market=None, keyboard=None):
     # Telegram may throttle several sendMessage requests to the same chat.
-    # Top Markets sends five messages; pace them instead of risking HTTP 429.
+    # Pace notifications and matching-market lists to reduce HTTP 429 risk.
     chat_key = str(chat)
     next_allowed = _LAST_CHAT_SEND.get(chat_key, 0.0)
     remaining = next_allowed - time.monotonic()
