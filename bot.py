@@ -13,9 +13,31 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+def load_private_credentials(path=None):
+    """Optional private config for hosts that cannot add arbitrary env vars.
+
+    Store data/secrets.json only on the private host, never in the Git repository.
+    Normal environment variables take priority over this file.
+    """
+    path = pathlib.Path(path or os.environ.get("ALERTS_SECRETS_FILE",
+                                             "data/secrets.json"))
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        raise SystemExit("Private credentials file is unreadable or invalid JSON.") from exc
+    if not isinstance(cfg, dict):
+        raise SystemExit("Private credentials file must contain a JSON object.")
+    return cfg
+
+
+_PRIVATE = load_private_credentials()
+TOKEN = str(os.environ.get("TELEGRAM_BOT_TOKEN") or
+            _PRIVATE.get("TELEGRAM_BOT_TOKEN") or "").strip()
 KASH_API = os.environ.get("KASH_MARKETS_API", "https://api.kash.bot/v1/markets").strip()
-KASH_KEY = os.environ.get("KASH_API_KEY", "").strip()
+KASH_KEY = str(os.environ.get("KASH_API_KEY") or
+               _PRIVATE.get("KASH_API_KEY") or "").strip()
 STATE = pathlib.Path(os.environ.get("STATE_FILE", "data/state.json"))
 POLL = max(60, int(os.environ.get("POLL_SECONDS", "60")))
 _LAST_CHAT_SEND = {}
