@@ -10,6 +10,9 @@ An English-language Telegram bot for tracking Kash prediction markets (read-only
 - Direct links to market pages on `app.kash.bot/markets/<UUID>`
 - Separate settings for every Telegram subscriber
 - Top markets by **lifetime USDC volume** (`/top`)
+- Inline **Volume Filter** with presets: under $10, $10–$100, $100+, $1,000+, $10,000+, or all
+- **Custom** volume range by replying with a regular message (`250`, `<10`, `50-500`, `100+`); no slash command required
+- Show up to five active matching markets with **Show matching markets** or `/markets`
 - No trading, no wallet connection, no write-capable Kash key
 
 ## Try it on Windows (Python 3.11+)
@@ -17,7 +20,7 @@ An English-language Telegram bot for tracking Kash prediction markets (read-only
 1. Download ZIP from this repository (Code → Download ZIP), then extract.
 2. Double-click `START_LOCAL.cmd`.
 3. Paste your **BotFather Telegram token** and **read-only Kash API key** in the two private pop-up dialogs. These values are not saved to disk.
-4. Open [@VerdigoKashAlertsBot](https://t.me/VerdigoKashAlertsBot) in Telegram, send `/start`, and then `/soon`, `/status`, or `/top`.
+4. Open [@VerdigoKashAlertsBot](https://t.me/VerdigoKashAlertsBot) in Telegram, send `/start`, and then `/settings`, `/soon`, `/status`, or `/top`.
 5. Keep the command window open while testing. Close it to stop the bot.
 
 Never paste keys into GitHub, Telegram chats, screenshots, or the Windows command line. Kash key only needs `markets:read`.
@@ -29,6 +32,8 @@ Never paste keys into GitHub, Telegram chats, screenshots, or the Windows comman
 - Kash authenticated REST `GET https://api.kash.bot/v1/markets`: market list, `freezeAt`, `tradeable`, cursor paging
 - Kash public read-only `GET https://app.kash.bot/api/markets/state?ids=...`: lifetime volume in atomic USDC (converted to USDC by dividing by 1,000,000)
 - Telegram Bot API long polling, one worker, JSON state in `data/state.json`
+
+The market volume filter applies to volume-based alerts and the matching-markets view, **not** the 15/30/60-minute closing alerts or unusual-activity alerts. On the first run, it learns an initial market-volume baseline instead of sending a flood of existing market alerts; after that, it alerts about newly observed markets in the range or changes crossing into it, at most five volume notifications per subscriber per scan. Selecting a different filter does not immediately alert about all existing markets in that range.
 
 This is a beta. Volume data can be unavailable if the public API is down. The bot continues closing-time alerts in that case. Notifications are informational, not trading advice.
 
