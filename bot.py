@@ -201,10 +201,10 @@ def volume_label(cfg):
         return f"{value:,.2f}".rstrip("0").rstrip(".") if isinstance(value, float) else f"{value:,}"
 
     if maximum is None:
-        return "All volumes" if minimum == 0 else f"From \${fmt(minimum)} USDC"
+        return "All volumes" if minimum == 0 else f"From ${fmt(minimum)} USDC"
     if minimum == 0:
-        return f"Under \${fmt(maximum)} USDC"
-    return f"\${fmt(minimum)}–\${fmt(maximum)} USDC"
+        return f"Under ${fmt(maximum)} USDC"
+    return f"${fmt(minimum)}–${fmt(maximum)} USDC"
 
 
 def volume_keyboard():
@@ -248,7 +248,7 @@ def volume_markets(chat, state, markets):
          f"Matches: {len(selected)} | Showing up to 5:")
     for m in selected[:5]:
         send(chat, market_message(m, "💵 <b>Matching Market</b>",
-                                  f"Total volume: \${m['volume']:,.2f} USDC"), m)
+                                  f"Total volume: ${m['volume']:,.2f} USDC"), m)
 
 
 def parse_volume_range(raw):
@@ -256,19 +256,19 @@ def parse_volume_range(raw):
     value = raw.strip().lower().replace("usdc", "").replace("$", "").replace(",", "").replace(" ", "")
     if value == "all":
         return 0, None
-    if not re.fullmatch(r"(?:<|>)?\d+(?:\.\d+)?\+?(?:-\d+(?:\.\d+)?)?", value):
-        raise ValueError("Use 100, 100+, <10, 10-100 or all.")
-    if "-" in value:
+    if re.fullmatch(r"\d+(?:\.\d+)?-\d+(?:\.\d+)?", value):
         parts = value.split("-")
         minimum, maximum = float(parts[0]), float(parts[1])
         if not 0 <= minimum < maximum <= 1_000_000_000:
             raise ValueError("The range must have a larger maximum (up to 1B USDC).")
         return minimum, maximum
-    if value.startswith("<"):
+    if re.fullmatch(r"<\d+(?:\.\d+)?", value):
         maximum = float(value[1:])
         if not 0 < maximum <= 1_000_000_000:
             raise ValueError("The maximum must be above zero.")
         return 0, maximum
+    if not re.fullmatch(r">?\d+(?:\.\d+)?\+?", value):
+        raise ValueError("Use 100, 100+, <10, 10-100 or all.")
     minimum = float(value.strip(">+"))
     if not 0 <= minimum <= 1_000_000_000:
         raise ValueError("Amount must be between 0 and 1B USDC.")
