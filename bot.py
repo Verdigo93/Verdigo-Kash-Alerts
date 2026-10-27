@@ -287,7 +287,7 @@ def handle_volume_reply(chat, message, state):
         minimum, maximum = parse_volume_range(message)
     except ValueError as exc:
         send(chat, f"❌ {html.escape(str(exc))}\n"
-             "Try: 100, 100+, <10 or 10-100. Send cancel to exit.")
+             "Try: 100, 100+, &lt;10 or 10-100. Send cancel to exit.")
         return True
     cfg["min_volume"] = minimum
     cfg["max_volume"] = maximum
