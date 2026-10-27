@@ -91,5 +91,74 @@ class BotTests(unittest.TestCase):
         self.assertEqual(send.call_args.args[2]["url"],
                          "https://app.kash.bot/markets/" + ID1)
 
+
+    def test_volume_range_parsing(self):
+        self.assertEqual(bot.parse_volume_range("100"), (100, None))
+        self.assertEqual(bot.parse_volume_range("<10"), (0, 10))
+        self.assertEqual(bot.parse_volume_range("10-100"), (10, 100))
+        self.assertEqual(bot.parse_volume_range("100+"), (100, None))
+        self.assertEqual(bot.parse_volume_range("all"), (0, None))
+        self.assertEqual(bot.parse_volume_range("$1,000"), (1000, None))
+        for invalid in ("-10", "100-10", "<0", "2+--5", "1+5", "hello", ""):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    bot.parse_volume_range(invalid)
+
+    def test_volume_range_edges_and_legacy_preferences(self):
+        legacy = {"min_volume": 100}
+        self.assertFalse(bot.volume_matches(99.99, legacy))
+        self.assertTrue(bot.volume_matches(100, legacy))
+        band = {"min_volume": 10, "max_volume": 100}
+        self.assertFalse(bot.volume_matches(9.9, band))
+        self.assertTrue(bot.volume_matches(10, band))
+        self.assertTrue(bot.volume_matches(99.9, band))
+        self.assertFalse(bot.volume_matches(100, band))
+
+    def test_volume_buttons_and_custom_user_reply(self):
+        state = {"users": {}, "sent": {}, "history": {}, "offset": 0}
+        with patch.object(bot, "send"):
+            bot.volume_action("123", "under10", state, {})
+            self.assertEqual(state["users"]["123"]["min_volume"], 0)
+            self.assertEqual(state["users"]["123"]["max_volume"], 10)
+            bot.volume_action("123", "custom", state, {})
+            self.assertTrue(state["users"]["123"]["awaiting_volume"])
+            self.assertTrue(bot.handle_volume_reply("123", "50-500", state))
+            self.assertEqual(state["users"]["123"]["min_volume"], 50)
+            self.assertEqual(state["users"]["123"]["max_volume"], 500)
+            self.assertFalse(state["users"]["123"]["awaiting_volume"])
+        # Each user's settings remain independent.
+        self.assertEqual(bot.user(state, "456")["min_volume"], 10000)
+
+    def test_volume_first_scan_baseline_then_new_market_alert(self):
+        now = dt.datetime(2099, 5, 1, 16, 0, tzinfo=dt.timezone.utc).timestamp()
+        markets = {ID1: bot.normalize(sample_market(ID1))}
+        markets[ID1]["volume"] = 5
+        cfg = {"thresholds": [], "volume": True, "activity": False,
+               "min_volume": 0, "max_volume": 10, "paused": False}
+        state = {"users": {"123": cfg}, "sent": {}, "history": {}, "offset": 0}
+        with patch.object(bot, "send") as send:
+            bot.scan(state, markets, now)
+            self.assertEqual(send.call_count, 0, "Do not spam all existing low-volume markets")
+            markets[ID2] = bot.normalize(sample_market(ID2))
+            markets[ID2]["volume"] = 7
+            bot.scan(state, markets, now + 60)
+            self.assertEqual(send.call_count, 1, "Alert for a newly listed matching market")
+            self.assertIn("Market Matches Your Volume Filter", send.call_args.args[1])
+            bot.scan(state, markets, now + 120)
+            self.assertEqual(send.call_count, 1, "Do not repeat market volume alerts")
+
+    def test_matching_markets_preview_independent_of_alerts(self):
+        m1 = bot.normalize(sample_market(ID1))
+        m1["volume"] = 7
+        m2 = bot.normalize(sample_market(ID2))
+        m2["volume"] = 700
+        state = {"users": {"123": {"min_volume": 0, "max_volume": 10}},
+                 "sent": {}, "history": {}, "offset": 0}
+        with patch.object(bot, "send") as send:
+            bot.volume_markets("123", state, {ID1: m1, ID2: m2})
+        self.assertEqual(send.call_count, 2)
+        self.assertIn("Matching Market", send.call_args_list[1].args[1])
+        self.assertEqual(send.call_args_list[1].args[2]["id"], ID1)
+
 if __name__ == "__main__":
     unittest.main()
