@@ -9,7 +9,7 @@ An English-language Telegram bot for tracking Kash prediction markets (read-only
 - High-volume threshold-crossing alerts and unusual volume-change alerts
 - Direct links to market pages on `app.kash.bot/markets/<UUID>`
 - Separate settings for every Telegram subscriber
-- Top markets by **lifetime USDC volume** (`/top`)
+- Top markets by **lifetime USDC volume** (`/top`): choose Top 5, 10, 15 or 20 per Telegram user; navigate in pages of five markets in a single editable message with clickable market links
 - Inline **Volume Filter** with presets: under $10, $10–$100, $100+, $1,000+, $10,000+, or all
 - **Custom** volume range by replying with a regular message (`250`, `<10`, `50-500`, `100+`); no slash command required
 - Show up to five active matching markets with **Show matching markets** or `/markets`
@@ -20,7 +20,7 @@ An English-language Telegram bot for tracking Kash prediction markets (read-only
 1. Download ZIP from this repository (Code → Download ZIP), then extract.
 2. Double-click `START_LOCAL.cmd`.
 3. Paste your **BotFather Telegram token** and **read-only Kash API key** in the two private pop-up dialogs. These values are not saved to disk.
-4. Open [@VerdigoKashAlertsBot](https://t.me/VerdigoKashAlertsBot) in Telegram, send `/start`, and then `/settings`, `/soon`, `/status`, or `/top`.
+4. Open [@VerdigoKashAlertsBot](https://t.me/VerdigoKashAlertsBot) in Telegram, send `/start`, and then `/settings`, `/soon`, `/status`, or `/top`. Tap **Top Markets**, choose 5/10/15/20, then use **Next** and **Previous**; `/top 20` opens a list directly.
 5. Keep the command window open while testing. Close it to stop the bot.
 
 Never paste keys into GitHub, Telegram chats, screenshots, or the Windows command line. Kash key only needs `markets:read`.
