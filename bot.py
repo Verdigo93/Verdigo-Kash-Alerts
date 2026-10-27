@@ -1,4 +1,4 @@
-"""Verdigo Kash Alerts v0.2 — English-only, multi-user Telegram alerts.
+"""Verdigo Kash Alerts v0.3 — English-only, multi-user Telegram alerts.
 Python 3.11+; standard library only. No trading endpoints or wallet access.
 """
 import datetime as dt
@@ -23,7 +23,7 @@ def http_json(url, params=None, payload=None, headers=None):
     if params:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     body = None if payload is None else json.dumps(payload).encode("utf-8")
-    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.2"}
+    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.3"}
     if body is not None:
         h["Content-Type"] = "application/json"
     h.update(headers or {})
@@ -102,13 +102,16 @@ def normalize(item):
         except ValueError:
             pass
     return {"id": market_id, "title": title, "close": close, "volume": volume,
-            "url": url, "status": str(item.get("status") or "").upper()}
+            "url": url, "status": str(item.get("status") or "").upper(),
+            "tradeable": item.get("tradeable") is True}
 
 def fetch_markets():
-    headers = {"X-API-Key": KASH_KEY} if KASH_KEY else {}
+    if not KASH_KEY:
+        raise ValueError("KASH_API_KEY is required. Set it as a secret environment variable.")
+    headers = {"X-API-Key": KASH_KEY, "X-Kash-Api-Version": "2026-08-19"}
     result = {}
     cursor = None
-    for _ in range(20):
+    for page in range(100):
         params = {"status": "ACTIVE", "limit": 100}
         if cursor:
             params["cursor"] = cursor
@@ -129,13 +132,44 @@ def fetch_markets():
             if not isinstance(raw, dict):
                 continue
             m = normalize(raw)
-            if m["id"] and m["title"] and m["status"] not in ("CLOSED", "RESOLVED", "CANCELLED"):
+            if m["id"] and m["title"] and m["tradeable"] and m["close"] is not None:
                 result[m["id"]] = m
-        new_cursor = pagination.get("nextCursor") or pagination.get("next_cursor")
-        if not new_cursor or new_cursor == cursor:
+        new_cursor = pagination.get("cursor")
+        if not pagination.get("hasMore"):
             break
+        if not new_cursor or new_cursor == cursor:
+            raise ValueError("Incomplete Kash pagination: next cursor missing or repeated")
         cursor = new_cursor
+    else:
+        raise ValueError("Market pagination exceeded 100 pages; refusing partial scan")
+    enrich_with_market_state(result)
     return result
+
+def enrich_with_market_state(markets):
+    """Fetch live USDC volumes from the documented public embed API in batches.
+    Kash REST /v1/markets contains lifecycle data but no total volume field.
+    Public state volume is USDC atomic-6, not whole USDC.
+    Failures must not prevent closing-time alerts.
+    """
+    ids = list(markets)
+    for start in range(0, len(ids), 200):
+        batch = ids[start:start + 200]
+        try:
+            result = http_json("https://app.kash.bot/api/markets/state",
+                               params={"ids": ",".join(batch)})
+            if not isinstance(result, dict) or not isinstance(result.get("markets"), list):
+                raise ValueError("Invalid public market-state response")
+            for raw in result["markets"]:
+                if not isinstance(raw, dict):
+                    continue
+                mid = raw.get("id")
+                if mid not in markets:
+                    continue
+                atomic_volume = numeric(raw.get("totalVolume"))
+                if atomic_volume is not None and atomic_volume >= 0:
+                    markets[mid]["volume"] = atomic_volume / 1_000_000
+        except Exception as exc:
+            logging.warning("Volume enrichment unavailable (closing alerts still work): %s", exc)
 
 def send(chat, message, market=None, keyboard=None):
     data = {"chat_id": chat, "text": message, "parse_mode": "HTML",
@@ -216,7 +250,7 @@ def command(chat, text, state, markets):
              f"Markets in latest scan: {len(markets)}\n"
              f"Scan interval: {POLL} seconds\n"
              f"Alerts: {'paused' if cfg['paused'] else 'active'}\n"
-             "Kash API fields and direct URLs must be verified before public launch.")
+             "Closing alerts use the trade-freeze time from Kash.")
 
 def toggle(chat, action, state, markets):
     cfg = user(state, chat)
@@ -250,13 +284,14 @@ def scan(state, markets, now):
                              f"Time remaining: {max(1, round(remaining))} min\n"
                              f"Alert: {threshold} minutes"), m)
                         state["sent"][event] = now
-            if cfg["volume"] and m["volume"] is not None and m["volume"] >= cfg["min_volume"]:
+            old = state["history"].get(m["id"])
+            if (cfg["volume"] and old and m["volume"] is not None and
+                    old["volume"] < cfg["min_volume"] <= m["volume"]):
                 event = f"{prefix}:volume:{cfg['min_volume']}"
                 if event not in state["sent"]:
                     send(chat, market_message(m, "💰 <b>High Volume Market</b>",
                          f"Reported volume: {m['volume']:,.0f}"), m)
                     state["sent"][event] = now
-            old = state["history"].get(m["id"])
             if cfg["activity"] and old and m["volume"] is not None:
                 age = now - old["at"]
                 delta = m["volume"] - old["volume"]
