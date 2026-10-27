@@ -517,7 +517,9 @@ def scan(state, markets, now):
     state["sent"] = {k: v for k, v in state["sent"].items() if now - v < 3 * 86400}
     state["history"] = {k: v for k, v in state["history"].items() if now - v["at"] < 2 * 86400}
     state["seen_volume_markets"] = {k: v for k, v in seen_volumes.items() if now - v < 7 * 86400}
-    state["volume_baseline_ready"] = True
+    if not volume_baseline_ready:
+        # Do not mark baseline ready until the volume API has returned data.
+        state["volume_baseline_ready"] = any(m.get("volume") is not None for m in markets.values())
 
 def main():
     if not TOKEN:
