@@ -676,8 +676,9 @@ def scan(state, markets, now):
                     "Their alerts are paused until they interact with the bot again.")
             else:
                 logging.warning("Telegram notification delivery failed: HTTP %d", exc.code)
-        except Exception:
-            logging.exception("Notification processing failed for one subscriber")
+        except Exception as exc:
+            logging.error("Notification processing failed for one subscriber: %s",
+                          type(exc).__name__)
     # Update history and first-seen data once per scan, not per user.
     for m in markets.values():
         if m["volume"] is not None:
@@ -768,8 +769,14 @@ def main():
                         cfg["awaiting_volume"] = False
                         show_settings(cb_chat, state)
             save(state)
+        except urllib.error.HTTPError as exc:
+            # HTTPError contains a URL with the BotFather token. Log only the
+            # code, never the full exception or traceback.
+            logging.error("Telegram update processing failed: HTTP %d", exc.code)
+            time.sleep(5)
         except Exception as exc:
-            logging.exception("Telegram polling or message delivery failed: %s", exc)
+            logging.error("Telegram update processing failed: %s",
+                          type(exc).__name__)
             time.sleep(5)
 
 if __name__ == "__main__":
