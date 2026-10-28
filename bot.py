@@ -581,10 +581,21 @@ def command(chat, text, state, markets):
     elif name == "/soon":
         next_closings(chat, markets)
     elif name == "/status":
+        last_ok = numeric(state.get("last_market_success_at"))
+        if last_ok is None:
+            last_update = "No successful fetch recorded yet"
+        else:
+            elapsed = max(0, int((time.time() - last_ok) / 60))
+            last_update = f"{elapsed} min ago"
+        recent_error = state.get("last_market_error")
+        api_health = ("OK" if not recent_error
+                      else "Latest fetch failed: " + html.escape(str(recent_error)))
         send(chat, f"📡 <b>Monitoring Status</b>\n"
-             f"Markets in latest scan: {len(markets)}\n"
+             f"Markets in latest successful scan: {len(markets)}\n"
+             f"Last Kash data update: {last_update}\n"
+             f"Kash API: {api_health}\n"
              f"Scan interval: {POLL} seconds\n"
-             f"Alerts: {'paused' if cfg['paused'] else 'active'}\n"
+             f"Alerts: {'paused' if cfg.get('paused') else 'active'}\n"
              "Closing alerts use the trade-freeze time from Kash.")
 
 def toggle(chat, action, state, markets):
@@ -707,11 +718,16 @@ def main():
                 fresh = fetch_markets()
             except urllib.error.HTTPError as exc:
                 # Authenticated Kash request failed, not Telegram delivery.
+                state["last_market_error"] = f"HTTP {exc.code}"
                 logging.error("Kash markets API refused access: HTTP %d", exc.code)
             except Exception as exc:
-                logging.error("Kash market retrieval failed: %s", exc)
+                state["last_market_error"] = type(exc).__name__
+                logging.error("Kash market retrieval failed: %s",
+                              type(exc).__name__)
             else:
                 markets = fresh
+                state["last_market_success_at"] = now
+                state["last_market_error"] = None
                 scan(state, markets, now)
                 logging.info("Fetched %d markets; %d subscribers",
                              len(markets), len(state["users"]))
