@@ -1,4 +1,4 @@
-"""Verdigo Kash Alerts v0.7 — English-only, multi-user Telegram alerts.
+"""Verdigo Kash Alerts v0.8 — English-only, multi-user Telegram alerts.
 Python 3.11+; standard library only. No trading endpoints or wallet access.
 """
 import datetime as dt
@@ -47,7 +47,7 @@ def http_json(url, params=None, payload=None, headers=None):
     if params:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     body = None if payload is None else json.dumps(payload).encode("utf-8")
-    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.7"}
+    h = {"Accept": "application/json", "User-Agent": "VerdigoKashAlerts/0.8"}
     if body is not None:
         h["Content-Type"] = "application/json"
     h.update(headers or {})
@@ -606,60 +606,78 @@ def toggle(chat, action, state, markets):
         cfg["awaiting_volume"] = False
     show_settings(chat, state)
 
+def scan_subscriber(chat, cfg, state, markets, now, seen_volumes,
+                    volume_baseline_ready):
+    """Process alerts per subscriber so one blocked chat cannot affect others."""
+    volume_alerts_this_scan = 0
+    for m in markets.values():
+        if not m["url"]:
+            continue  # Never invent a direct market URL.
+        prefix = chat + ":" + m["id"]
+        if m["close"] is not None:
+            remaining = (m["close"] - now) / 60
+            # Catch up on missed scan windows without issuing multiple stale
+            # threshold alerts: pick the closest configured threshold.
+            eligible = sorted(t for t in set(cfg["thresholds"])
+                              if 0 < remaining <= t)
+            if eligible:
+                threshold = eligible[0]
+                event = f"{prefix}:closing:{threshold}"
+                if event not in state["sent"]:
+                    send(chat, market_message(m, "⏰ <b>Market Closing Soon!</b>",
+                         f"❗ <b>Time remaining: {max(1, round(remaining))} min</b> ❗\n\n"
+                         f"🔔 Alert: {threshold} minutes"), m)
+                    # Larger alerts have already been missed: do not send
+                    # them later after a restart or a brief API outage.
+                    for t in eligible:
+                        state["sent"][f"{prefix}:closing:{t}"] = now
+        old = state["history"].get(m["id"])
+        in_range = volume_matches(m["volume"], cfg)
+        crossed_into_range = (old is not None and
+                              not volume_matches(old["volume"], cfg) and in_range)
+        newly_seen_matching = (volume_baseline_ready and
+                               m["id"] not in seen_volumes and in_range)
+        if (cfg.get("volume", True) and
+                (crossed_into_range or newly_seen_matching) and
+                volume_alerts_this_scan < 5):
+            band = f"{cfg.get('min_volume',10000)}:{cfg.get('max_volume')}"
+            event = f"{prefix}:volume:{band}"
+            if event not in state["sent"]:
+                send(chat, market_message(m, "💰 <b>Market Matches Your Volume Filter</b>",
+                     f"Total volume: ${m['volume']:,.2f} USDC\n"
+                     f"Your range: {html.escape(volume_label(cfg))}"), m)
+                state["sent"][event] = now
+                volume_alerts_this_scan += 1
+        if cfg["activity"] and old and m["volume"] is not None:
+            age = now - old["at"]
+            delta = m["volume"] - old["volume"]
+            if 300 <= age <= 3600 and old["volume"] >= 100 and delta >= max(500, old["volume"] * 1.5):
+                event = f"{prefix}:spike:{int(now // 3600)}"
+                if event not in state["sent"]:
+                    send(chat, market_message(m, "🔥 <b>Unusual Volume Increase</b>",
+                         f"Volume increase since previous snapshot: +{delta:,.0f}"), m)
+                    state["sent"][event] = now
+
 def scan(state, markets, now):
     seen_volumes = state.setdefault("seen_volume_markets", {})
     volume_baseline_ready = state.get("volume_baseline_ready", False)
     for chat, cfg in list(state["users"].items()):
-        volume_alerts_this_scan = 0
-        if cfg.get("paused"):
+        if cfg.get("paused") or cfg.get("delivery_disabled"):
             continue
-        for m in markets.values():
-            if not m["url"]:
-                continue  # Never invent a direct market URL.
-            prefix = chat + ":" + m["id"]
-            if m["close"] is not None:
-                remaining = (m["close"] - now) / 60
-                # Catch up on missed scan windows without issuing multiple stale
-                # threshold alerts: pick the closest configured threshold.
-                eligible = sorted(t for t in set(cfg["thresholds"])
-                                  if 0 < remaining <= t)
-                if eligible:
-                    threshold = eligible[0]
-                    event = f"{prefix}:closing:{threshold}"
-                    if event not in state["sent"]:
-                        send(chat, market_message(m, "⏰ <b>Market Closing Soon!</b>",
-                             f"❗ <b>Time remaining: {max(1, round(remaining))} min</b> ❗\n\n"
-                             f"🔔 Alert: {threshold} minutes"), m)
-                        # Larger alerts have already been missed: do not send
-                        # them later after a restart or a brief API outage.
-                        for t in eligible:
-                            state["sent"][f"{prefix}:closing:{t}"] = now
-            old = state["history"].get(m["id"])
-            in_range = volume_matches(m["volume"], cfg)
-            crossed_into_range = (old is not None and
-                                  not volume_matches(old["volume"], cfg) and in_range)
-            newly_seen_matching = (volume_baseline_ready and
-                                   m["id"] not in seen_volumes and in_range)
-            if (cfg.get("volume", True) and
-                    (crossed_into_range or newly_seen_matching) and
-                    volume_alerts_this_scan < 5):
-                band = f"{cfg.get('min_volume',10000)}:{cfg.get('max_volume')}"
-                event = f"{prefix}:volume:{band}"
-                if event not in state["sent"]:
-                    send(chat, market_message(m, "💰 <b>Market Matches Your Volume Filter</b>",
-                         f"Total volume: ${m['volume']:,.2f} USDC\n"
-                         f"Your range: {html.escape(volume_label(cfg))}"), m)
-                    state["sent"][event] = now
-                    volume_alerts_this_scan += 1
-            if cfg["activity"] and old and m["volume"] is not None:
-                age = now - old["at"]
-                delta = m["volume"] - old["volume"]
-                if 300 <= age <= 3600 and old["volume"] >= 100 and delta >= max(500, old["volume"] * 1.5):
-                    event = f"{prefix}:spike:{int(now // 3600)}"
-                    if event not in state["sent"]:
-                        send(chat, market_message(m, "🔥 <b>Unusual Volume Increase</b>",
-                             f"Volume increase since previous snapshot: +{delta:,.0f}"), m)
-                        state["sent"][event] = now
+        try:
+            scan_subscriber(chat, cfg, state, markets, now, seen_volumes,
+                            volume_baseline_ready)
+        except urllib.error.HTTPError as exc:
+            # Only Telegram sendMessage calls occur in scan_subscriber.
+            if exc.code == 403:
+                cfg["delivery_disabled"] = True
+                logging.warning(
+                    "Telegram refused delivery to one subscriber (HTTP 403). "
+                    "Their alerts are paused until they interact with the bot again.")
+            else:
+                logging.warning("Telegram notification delivery failed: HTTP %d", exc.code)
+        except Exception:
+            logging.exception("Notification processing failed for one subscriber")
     # Update history and first-seen data once per scan, not per user.
     for m in markets.values():
         if m["volume"] is not None:
@@ -686,11 +704,16 @@ def main():
         if now - last_scan >= POLL:
             try:
                 fresh = fetch_markets()
+            except urllib.error.HTTPError as exc:
+                # Authenticated Kash request failed, not Telegram delivery.
+                logging.error("Kash markets API refused access: HTTP %d", exc.code)
+            except Exception as exc:
+                logging.error("Kash market retrieval failed: %s", exc)
+            else:
                 markets = fresh
                 scan(state, markets, now)
-                logging.info("Fetched %d markets; %d subscribers", len(markets), len(state["users"]))
-            except Exception as exc:
-                logging.error("Market scan failed: %s", exc)
+                logging.info("Fetched %d markets; %d subscribers",
+                             len(markets), len(state["users"]))
             last_scan = now
             save(state)
         try:
@@ -703,6 +726,7 @@ def main():
                 if chat and isinstance(message.get("text"), str):
                     incoming = message["text"].strip()
                     cfg = user(state, chat)
+                    cfg.pop("delivery_disabled", None)
                     name = incoming.casefold()
                     if name in ("settings", "menu", "home"):
                         cfg["awaiting_volume"] = False
@@ -724,6 +748,8 @@ def main():
                     except Exception as exc:
                         logging.warning("Callback acknowledgement failed: %s", exc)
                     cb_chat = ((callback.get("message") or {}).get("chat") or {}).get("id")
+                    if cb_chat:
+                        user(state, cb_chat).pop("delivery_disabled", None)
                     if cb_chat and callback.get("data", "").startswith("toggle:"):
                         toggle(cb_chat, callback["data"].split(":", 1)[1], state, markets)
                     elif cb_chat and callback.get("data", "").startswith("vol:"):
