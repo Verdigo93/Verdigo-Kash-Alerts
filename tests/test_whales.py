@@ -59,13 +59,22 @@ class WhaleTests(unittest.TestCase):
         self.assertEqual([(e["user_id"], e["kind"], e["delta"]) for e in events],
                          [("a", "increase", 150_000_000), ("c", "new", 50_000_000)])
 
-    def test_disabled_by_default_never_requests(self):
-        s = state({"123": {"thresholds": [60]}})
+    def test_opted_out_subscriber_makes_no_requests(self):
+        s = state({"123": {"thresholds": [60], "whale_enabled": False}})
         f = Mock()
         whales.poll(s, {M1: market()}, Mock(), now=1000, fetch=f)
         f.assert_not_called()
         self.assertNotIn("whale_tracker", s)
-        self.assertFalse(bot.defaults()["whale_enabled"])
+
+    def test_legacy_and_new_subscribers_enabled_by_default(self):
+        self.assertTrue(bot.defaults()["whale_enabled"])
+        self.assertIn("20-50", bot.defaults()["whale_bands"])
+        s = state({"old": {"thresholds": [60]}})
+        fetch = Mock(return_value=whales.normalize_entries([entry("a", 100)]))
+        send = Mock()
+        whales.poll(s, {M1: market()}, send, now=1000, fetch=fetch)
+        fetch.assert_called_once()
+        send.assert_not_called()  # Older subscribers never receive historical alerts.
 
     def test_initial_baseline_silent_then_position_increase_once(self):
         s = state()
@@ -180,9 +189,11 @@ class WhaleTests(unittest.TestCase):
         s = state({"123": bot.defaults()})
         with patch.object(bot, "send") as send:
             bot.whale_action("123", "toggle", s)
+            self.assertFalse(s["users"]["123"]["whale_enabled"])
+            bot.whale_action("123", "toggle", s)
             self.assertTrue(s["users"]["123"]["whale_enabled"])
             bot.whale_action("123", "band:20-50", s)
-            self.assertIn("20-50", s["users"]["123"]["whale_bands"])
+            self.assertNotIn("20-50", s["users"]["123"]["whale_bands"])
             bot.whale_action("123", "new", s)
             self.assertFalse(s["users"]["123"]["whale_new"])
             bot.command("123", "/whales", s, {})
