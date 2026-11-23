@@ -46,6 +46,10 @@ This is a beta. Volume data can be unavailable if the public API is down. The bo
 
 Docs: [Kash REST Markets](https://docs.kash.bot/developer-docs/rest-api/endpoints/markets) · [Kash API Pagination](https://docs.kash.bot/developer-docs/rest-api/pagination) · [Kash Public Market State](https://docs.kash.bot/developer-docs/public-embed-api/endpoints/markets-state)
 
+## Free health check (no terminal required)
+
+Send `/whalestatus` to the Telegram bot to see the active configuration, eligible market count, number of snapshot markets and tracked public positions, time of the last attempted/successful leaderboard read, latest failure code, and any API backoff. This command makes no API requests and never exposes user IDs or API tokens.
+
 ## Whale Alerts (beta; enabled by default)
 
 The `/whales` menu has ON/OFF, independently enabled **newly observed positions** and **position increases**, and multiple selectable USDC ranges. The range is applied to the amount **added since the last observation**, not the entire position. Whale Alerts are enabled by default for new and existing subscribers unless they explicitly turn the feature off. All five $20+ ranges are selected initially.
