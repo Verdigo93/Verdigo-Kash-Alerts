@@ -1,4 +1,4 @@
-"""Opt-in read-only alerts for changes in Kash leaderboard investments.
+"""Read-only alerts for changes in Kash leaderboard investments.
 
 Only observes top 50 public leaderboard entries per market. Does not identify
 individual trades or prove a profile is human. Zero requests until enabled.
@@ -19,7 +19,7 @@ BANDS = {
     "500-1000": (500, 1000),
     "1000+": (1000, None),
 }
-DEFAULT_BANDS = ("50-100", "100-500", "500-1000", "1000+")
+DEFAULT_BANDS = tuple(BANDS)
 MAX_REQUESTS_PER_SCAN = 3
 MAX_ALERTS_PER_SUBSCRIBER = 5
 LEADERBOARD_LIMIT = 50
@@ -135,7 +135,7 @@ def poll(state, markets, send, now=None, fetch=None):
     """
     enabled = [
         (chat, cfg) for chat, cfg in state.get("users", {}).items()
-        if cfg.get("whale_enabled", False)
+        if cfg.get("whale_enabled", True)
         and not cfg.get("paused", False)
         and not cfg.get("delivery_disabled", False)
     ]
