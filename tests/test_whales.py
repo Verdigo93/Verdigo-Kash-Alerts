@@ -89,6 +89,19 @@ class WhaleTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 2)
         self.assertEqual(s["whale_tracker"]["markets"][M1]["entries"]["a"]["amount"], 250_000_000)
 
+    def test_cached_leaderboard_rechecked_once_after_trade_count_change(self):
+        s, send = state(), Mock()
+        old = whales.normalize_entries([entry("a", 100)])
+        new = whales.normalize_entries([entry("a", 250)])
+        fetch = Mock(side_effect=[old, old, new])
+        whales.poll(s, {M1: market(count=3)}, send, now=1000, fetch=fetch)
+        whales.poll(s, {M1: market(count=4)}, send, now=1060, fetch=fetch)
+        send.assert_not_called()
+        self.assertEqual(s["whale_tracker"]["markets"][M1]["trade_count"], 3)
+        whales.poll(s, {M1: market(count=4)}, send, now=1120, fetch=fetch)
+        send.assert_called_once()
+        self.assertIn("150.00 USDC", send.call_args.args[1])
+
     def test_zero_trade_baseline_alerts_on_first_trade(self):
         s, send = state(), Mock()
         fetch = Mock(return_value=whales.normalize_entries([entry("a", 50)]))
