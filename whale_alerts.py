@@ -199,6 +199,13 @@ def poll(state, markets, send, now=None, fetch=None):
         if not isinstance(entries, dict):
             logging.warning("Whale leaderboard returned invalid entries")
             continue
+        # A fresh market-state trade count can precede the cached leaderboard.
+        # Recheck one more time next scan before accepting an unchanged result.
+        if (isinstance(old, dict) and trade_count > old.get("trade_count", 0)
+                and entries == old.get("entries", {})
+                and old.get("stale_rechecks", 0) < 1):
+            snapshots[mid] = {**old, "stale_rechecks": 1}
+            continue
         if isinstance(old, dict) and trade_count >= old.get("trade_count", 0):
             for event in changes(old.get("entries", {}), entries):
                 for chat, cfg in enabled:
