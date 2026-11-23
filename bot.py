@@ -62,7 +62,7 @@ def telegram(method, data):
 def defaults():
     return {"thresholds": [15, 30, 60], "volume": True, "activity": True,
             "min_volume": 10000, "max_volume": None, "paused": False,
-            "top_limit": 5, "whale_enabled": False,
+            "top_limit": 5, "whale_enabled": True,
             "whale_new": True, "whale_increase": True,
             "whale_bands": list(whale_alerts.DEFAULT_BANDS)}
 
@@ -378,7 +378,7 @@ def settings_keyboard(cfg):
           "callback_data": f"toggle:{n}"} for n in (15, 30, 60)],
         [{"text": ("✅" if cfg["volume"] else "⬜") + " Volume Alerts", "callback_data": "toggle:volume"}],
         [{"text": "💵 Volume Filter", "callback_data": "vol:menu"}],
-        [{"text": ("✅" if cfg.get("whale_enabled", False) else "⬜") + " 🐋 Whale Alerts",
+        [{"text": ("✅" if cfg.get("whale_enabled", True) else "⬜") + " 🐋 Whale Alerts",
           "callback_data": "whale:menu"}],
         [{"text": ("✅" if cfg["activity"] else "⬜") + " Unusual Activity", "callback_data": "toggle:activity"}],
         [{"text": "▶️ Resume" if cfg["paused"] else "⏸ Pause", "callback_data": "toggle:pause"}],
@@ -399,7 +399,7 @@ def show_settings(chat, state):
 def whale_keyboard(cfg):
     selected = set(cfg.get("whale_bands", whale_alerts.DEFAULT_BANDS))
     rows = [
-        [{"text": ("✅" if cfg.get("whale_enabled", False) else "⬜") + " Enable Whale Alerts",
+        [{"text": ("✅" if cfg.get("whale_enabled", True) else "⬜") + " Enable Whale Alerts",
           "callback_data": "whale:toggle"}],
         [{"text": ("✅" if cfg.get("whale_new", True) else "⬜") + " Newly observed positions",
           "callback_data": "whale:new"}],
@@ -422,7 +422,7 @@ def show_whale_menu(chat, state):
          "position value. Existing positions are learned silently when enabled.\n\n"
          "Tracks up to 50 largest public positions per market. A leaderboard "
          "change is <b>not</b> proof of one trade or a human trader.\n\n"
-         "Whale Alerts are OFF by default.",
+         "Whale Alerts are ON by default. You can disable them here.",
          keyboard=whale_keyboard(cfg))
 
 
@@ -432,7 +432,7 @@ def whale_action(chat, action, state):
         show_settings(chat, state)
         return
     if action == "toggle":
-        cfg["whale_enabled"] = not cfg.get("whale_enabled", False)
+        cfg["whale_enabled"] = not cfg.get("whale_enabled", True)
     elif action == "new":
         cfg["whale_new"] = not cfg.get("whale_new", True)
     elif action == "increase":
