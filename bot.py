@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import whale_alerts
 
 def load_private_credentials(path=None):
     """Optional private config for hosts that cannot add arbitrary env vars.
@@ -61,7 +62,9 @@ def telegram(method, data):
 def defaults():
     return {"thresholds": [15, 30, 60], "volume": True, "activity": True,
             "min_volume": 10000, "max_volume": None, "paused": False,
-            "top_limit": 5}
+            "top_limit": 5, "whale_enabled": True,
+            "whale_new": True, "whale_increase": True,
+            "whale_bands": list(whale_alerts.DEFAULT_BANDS)}
 
 def load():
     try:
@@ -191,6 +194,11 @@ def enrich_with_market_state(markets):
                 mid = raw.get("id")
                 if mid not in markets:
                     continue
+                # Public batch state also tells us whether a market received trades.
+                # Absence means whale tracking skips that market safely.
+                trade_count = raw.get("tradeCount")
+                if isinstance(trade_count, int) and not isinstance(trade_count, bool) and trade_count >= 0:
+                    markets[mid]["trade_count"] = trade_count
                 atomic_volume = numeric(raw.get("totalVolume"))
                 if atomic_volume is not None and atomic_volume >= 0:
                     markets[mid]["volume"] = atomic_volume / 1_000_000
@@ -370,6 +378,8 @@ def settings_keyboard(cfg):
           "callback_data": f"toggle:{n}"} for n in (15, 30, 60)],
         [{"text": ("✅" if cfg["volume"] else "⬜") + " Volume Alerts", "callback_data": "toggle:volume"}],
         [{"text": "💵 Volume Filter", "callback_data": "vol:menu"}],
+        [{"text": ("✅" if cfg.get("whale_enabled", True) else "⬜") + " 🐋 Whale Alerts",
+          "callback_data": "whale:menu"}],
         [{"text": ("✅" if cfg["activity"] else "⬜") + " Unusual Activity", "callback_data": "toggle:activity"}],
         [{"text": "▶️ Resume" if cfg["paused"] else "⏸ Pause", "callback_data": "toggle:pause"}],
         [{"text": "⏰ Next Closings", "callback_data": "soon"}],
@@ -384,6 +394,60 @@ def show_settings(chat, state):
          "Change it using 💵 Volume Filter.\n\n"
          "Alerts are informational, not trading advice.",
          keyboard=settings_keyboard(cfg))
+
+
+def whale_keyboard(cfg):
+    selected = set(cfg.get("whale_bands", whale_alerts.DEFAULT_BANDS))
+    rows = [
+        [{"text": ("✅" if cfg.get("whale_enabled", True) else "⬜") + " Enable Whale Alerts",
+          "callback_data": "whale:toggle"}],
+        [{"text": ("✅" if cfg.get("whale_new", True) else "⬜") + " Newly observed positions",
+          "callback_data": "whale:new"}],
+        [{"text": ("✅" if cfg.get("whale_increase", True) else "⬜") + " Position increases",
+          "callback_data": "whale:increase"}],
+    ]
+    for key in whale_alerts.BANDS:
+        rows.append([{"text": ("✅ " if key in selected else "⬜ ") + "$" + key.replace("-", "–"),
+                      "callback_data": "whale:band:" + key}])
+    rows.append([{"text": "◀️ Back to Settings", "callback_data": "whale:back"}])
+    return rows
+
+
+def show_whale_menu(chat, state):
+    cfg = user(state, chat)
+    send(chat, "🐋 <b>Whale Alerts</b>\n\n"
+         "Receive alerts when a public trader's invested amount first appears "
+         "or increases on a Kash market.\n\n"
+         "Select one or more ranges for the <b>new investment</b>, not the full "
+         "position value. Existing positions are learned silently when enabled.\n\n"
+         "Tracks up to 50 largest public positions per market. A leaderboard "
+         "change is <b>not</b> proof of one trade or a human trader.\n\n"
+         "Whale Alerts are ON by default. You can disable them here.",
+         keyboard=whale_keyboard(cfg))
+
+
+def whale_action(chat, action, state):
+    cfg = user(state, chat)
+    if action == "back":
+        show_settings(chat, state)
+        return
+    if action == "toggle":
+        cfg["whale_enabled"] = not cfg.get("whale_enabled", True)
+    elif action == "new":
+        cfg["whale_new"] = not cfg.get("whale_new", True)
+    elif action == "increase":
+        cfg["whale_increase"] = not cfg.get("whale_increase", True)
+    elif action.startswith("band:"):
+        band = action.split(":", 1)[1]
+        if band in whale_alerts.BANDS:
+            selected = set(cfg.get("whale_bands", whale_alerts.DEFAULT_BANDS))
+            if band in selected:
+                selected.remove(band)
+            else:
+                selected.add(band)
+            cfg["whale_bands"] = [b for b in whale_alerts.BANDS if b in selected]
+    show_whale_menu(chat, state)
+
 
 def market_message(m, header, details):
     """Emphasize the market question with safe HTML and readable spacing."""
@@ -548,6 +612,8 @@ def command(chat, text, state, markets):
              keyboard=[[{"text": "🏠 Main Menu", "callback_data": "menu"}]])
     elif name in ("/filter", "/volumerange"):
         show_volume_menu(chat, state)
+    elif name in ("/whale", "/whales"):
+        show_whale_menu(chat, state)
     elif name in ("/15", "/30", "/60"):
         n = int(name[1:])
         cfg["thresholds"] = sorted(set(cfg["thresholds"]) ^ {n})
@@ -729,6 +795,10 @@ def main():
                 state["last_market_success_at"] = now
                 state["last_market_error"] = None
                 scan(state, markets, now)
+                try:
+                    whale_alerts.poll(state, markets, send, now=now)
+                except Exception as exc:
+                    logging.warning("Whale scan skipped: %s", type(exc).__name__)
                 logging.info("Fetched %d markets; %d subscribers",
                              len(markets), len(state["users"]))
             last_scan = now
@@ -771,6 +841,8 @@ def main():
                         toggle(cb_chat, callback["data"].split(":", 1)[1], state, markets)
                     elif cb_chat and callback.get("data", "").startswith("vol:"):
                         volume_action(cb_chat, callback["data"].split(":", 1)[1], state, markets)
+                    elif cb_chat and callback.get("data", "").startswith("whale:"):
+                        whale_action(cb_chat, callback["data"].split(":", 1)[1], state)
                     elif cb_chat and callback.get("data") == "top":
                         top_menu(cb_chat, state)
                     elif cb_chat and callback.get("data", "").startswith("top:"):
