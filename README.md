@@ -16,6 +16,9 @@ An English-language Telegram bot for tracking Kash prediction markets (read-only
 - Resilient multi-user delivery: a blocked Telegram user (HTTP 403) cannot interrupt other subscribers' alerts
 - `/status` shows last successful Kash fetch and whether the latest Kash request failed
 - No trading, no wallet connection, no write-capable Kash key
+- **Opt-in Whale Alerts** (`/whales`): newly observed large positions and increases in a public trader's invested amount, with independent $20–50, $50–100, $100–500, $500–1,000 and $1,000+ filters. Disabled by default.
+- Public profiles and primary outcomes appear when Kash exposes them. These do **not** prove a trader is human or that the change is one individual buy.
+
 
 ## Try it on Windows (Python 3.11+)
 
@@ -42,3 +45,17 @@ The market volume filter applies to volume-based alerts and the matching-markets
 This is a beta. Volume data can be unavailable if the public API is down. The bot continues closing-time alerts in that case. Notifications are informational, not trading advice.
 
 Docs: [Kash REST Markets](https://docs.kash.bot/developer-docs/rest-api/endpoints/markets) · [Kash API Pagination](https://docs.kash.bot/developer-docs/rest-api/pagination) · [Kash Public Market State](https://docs.kash.bot/developer-docs/public-embed-api/endpoints/markets-state)
+
+## Whale Alerts (beta; opt-in)
+
+The optional `/whales` menu has ON/OFF, independently enabled **newly observed positions** and **position increases**, and multiple selectable USDC ranges. The range is applied to the amount **added since the last observation**, not the entire position. Existing users stay opted out.
+
+Implementation uses Kash's public market-state `tradeCount` to choose changed markets and requests `/api/markets/{id}/leaderboard?limit=50`. It compares each public `userId`'s `amount` (atomic 6-decimal USDC) across snapshots. **It does not use the `currentValue` field**, which moves with price. The primary outcome in the leaderboard is not necessarily the outcome of the most recent trade.
+
+**Accuracy boundaries:** This is a change in a public leaderboard snapshot, *not* a guaranteed new purchase, an exact account balance, or proof that the account belongs to a person. Changes between scans can be missed, cached leaderboard pages can be late, and only the top 50 entries per market are observed. Entry disappearance/reappearance can also be reported as a newly observed position. It is not a complete trade tape. No trading advice or buy/sell signal is implied.
+
+**Safety & performance:** Whale Alerts make **zero** extra API requests until at least one subscriber enables them. For enabled users, an initial baseline is silently learned (at most **3 extra leaderboard requests per 60-second scan**), so on a busy set of markets this can take several scans. There are at most **5 whale notifications per subscriber per scan**, a read-only HTTP 429/503 backoff, and deduplication via the existing `state.json`. No write API, wallet or additional scopes are required; existing closing and volume alerts remain unchanged.
+
+**Deployment:** Keep `whale_alerts.py` alongside `bot.py`. Back up the persistent `state.json`, deploy the updated files, restart one worker, then enable the feature using `/whales`. A stopped old process must not resume with the same Telegram token. The existing `KASH_API_KEY` requires only `markets:read` for the regular markets list; the whale leaderboard is public. Do not upload secrets or `data/` to GitHub.
+
+Docs: [Kash public leaderboard](https://docs.kash.bot/developer-docs/public-embed-api/endpoints/market-leaderboard) · [Kash public market state](https://docs.kash.bot/developer-docs/public-embed-api/endpoints/markets-state)
