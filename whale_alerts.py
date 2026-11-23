@@ -181,6 +181,7 @@ def poll(state, markets, send, now=None, fetch=None):
             inspected -= 1
             break
         requests += 1
+        tracker["last_leaderboard_attempt_at"] = now
         try:
             entries = fetch(mid)
         except urllib.error.HTTPError as exc:
@@ -191,14 +192,19 @@ def poll(state, markets, send, now=None, fetch=None):
                 except (ValueError, TypeError):
                     retry = 60
                 tracker["pause_until"] = now + retry
+            tracker["last_leaderboard_error"] = f"HTTP {exc.code}"
             logging.warning("Whale leaderboard unavailable: HTTP %s", exc.code)
             break
         except Exception as exc:
+            tracker["last_leaderboard_error"] = type(exc).__name__
             logging.warning("Whale leaderboard unavailable: %s", type(exc).__name__)
             continue
         if not isinstance(entries, dict):
+            tracker["last_leaderboard_error"] = "Invalid leaderboard response"
             logging.warning("Whale leaderboard returned invalid entries")
             continue
+        tracker["last_leaderboard_ok_at"] = now
+        tracker["last_leaderboard_error"] = None
         # A fresh market-state trade count can precede the cached leaderboard.
         # Recheck one more time next scan before accepting an unchanged result.
         if (isinstance(old, dict) and trade_count > old.get("trade_count", 0)

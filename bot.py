@@ -593,6 +593,45 @@ def next_closings(chat, markets, now=None):
                                   "<i>Manual preview — not an automatic alert</i>"), m)
 
 
+def show_whale_status(chat, state, markets):
+    """Read-only diagnostics for the current running bot: no extra API calls."""
+    cfg = user(state, chat)
+    tracker = state.get("whale_tracker") or {}
+    snapshots = tracker.get("markets") or {}
+    if not isinstance(snapshots, dict):
+        snapshots = {}
+    count = sum(len(s.get("entries", {})) for s in snapshots.values()
+                if isinstance(s, dict) and isinstance(s.get("entries", {}), dict))
+    eligible = sum(1 for m in markets.values()
+                   if isinstance(m.get("trade_count"), int)
+                   and m["trade_count"] >= 0 and m.get("url"))
+    enabled = sum(1 for x in state["users"].values()
+                  if x.get("whale_enabled", True) and not x.get("paused")
+                  and not x.get("delivery_disabled"))
+    now = time.time()
+
+    def age(value):
+        try:
+            return f"{max(0, int((now - float(value)) / 60))} min ago"
+        except (TypeError, ValueError, OverflowError):
+            return "Not yet"
+
+    last_error = tracker.get("last_leaderboard_error") or "None reported"
+    pause = tracker.get("pause_until", 0)
+    remaining = max(0, int((float(pause) - now) / 60)) if isinstance(pause, (int, float)) else 0
+    send(chat, "🐋 <b>Whale Monitoring Status</b>\n\n"
+         f"Your alerts: {'ON' if cfg.get('whale_enabled', True) else 'OFF'}\n"
+         f"Enabled subscribers: {enabled}\n"
+         f"Markets with trade counts: {eligible} / {len(markets)}\n"
+         f"Markets with saved snapshots: {len(snapshots)}\n"
+         f"Public positions in snapshots: {count}\n"
+         f"Last leaderboard attempt: {age(tracker.get('last_leaderboard_attempt_at'))}\n"
+         f"Last successful leaderboard read: {age(tracker.get('last_leaderboard_ok_at'))}\n"
+         f"Last leaderboard error: {html.escape(str(last_error))}\n"
+         f"Rate-limit cooldown: {remaining} min\n\n"
+         "<i>Snapshots are built gradually. This does not execute trades.</i>")
+
+
 def command(chat, text, state, markets):
     parts = text.strip().split()
     if not parts:
@@ -614,6 +653,8 @@ def command(chat, text, state, markets):
         show_volume_menu(chat, state)
     elif name in ("/whale", "/whales"):
         show_whale_menu(chat, state)
+    elif name == "/whalestatus":
+        show_whale_status(chat, state, markets)
     elif name in ("/15", "/30", "/60"):
         n = int(name[1:])
         cfg["thresholds"] = sorted(set(cfg["thresholds"]) ^ {n})
