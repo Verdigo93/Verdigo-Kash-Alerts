@@ -122,9 +122,10 @@ class WhaleTests(unittest.TestCase):
         send.assert_not_called()
         user["whale_new"] = True
         more = whales.normalize_entries([entry(str(i), 100 + i) for i in range(20, 40)])
-        lots.update(more)
+        # Simulate a fresh HTTP response, not a mutation of the stored snapshot.
+        latest = {**lots, **more}
         whales.poll(s, {M1: market(count=40)}, send, now=1120,
-                    fetch=Mock(return_value=lots))
+                    fetch=Mock(return_value=latest))
         self.assertEqual(send.call_count, whales.MAX_ALERTS_PER_SUBSCRIBER)
 
     def test_rate_limit_backoff_and_original_bot_survives(self):
