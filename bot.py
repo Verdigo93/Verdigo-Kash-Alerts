@@ -386,7 +386,7 @@ def volume_action(chat, action, state, markets, message_id=None):
         cfg["awaiting_volume"] = False
         show_settings(chat, state, message_id)
     elif action == "menu":
-        show_volume_menu(chat, state)
+        show_volume_menu(chat, state, message_id)
 
 
 def settings_keyboard(cfg):
