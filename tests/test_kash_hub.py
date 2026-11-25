@@ -173,5 +173,41 @@ class NewsTests(unittest.TestCase):
         fetch.assert_called_once()
 
 
+
+class AdditionalIntegrationTests(unittest.TestCase):
+    def test_optin_new_market_alerts_use_silent_baseline(self):
+        extra="aeb460d8-a404-4b0f-9385-0abcee8f3727"
+        newest="0b7d5a4e-2c1f-4e8a-9d3b-6f1e2a7c9d40"
+        base={MID:market()}
+        state={"users":{"1":bot.defaults()}}
+        send=Mock()
+        hub.poll_new_markets(state,base,send,1000)
+        self.assertTrue(state["hub_market_baseline_ready"])
+        send.assert_not_called()
+        mid2={**base,extra:{**market(),"id":extra,"url":"https://app.kash.bot/markets/"+extra}}
+        hub.poll_new_markets(state,mid2,send,1100)
+        send.assert_not_called()
+        self.assertEqual(hub.action("1","newmarkets",state,mid2,1150),"alerts")
+        self.assertTrue(state["users"]["1"]["hub_new_markets_enabled"])
+        three={**mid2,newest:{**market(),"id":newest,"url":"https://app.kash.bot/markets/"+newest}}
+        hub.poll_new_markets(state,three,send,1200)
+        send.assert_called_once()
+        self.assertIn("NEWLY DISCOVERED",send.call_args.args[1])
+
+    def test_start_sends_one_clean_menu(self):
+        s={"users":{}}
+        with patch.object(bot,"send") as mock_send:
+            bot.command("123","/start",s,{MID:market()})
+        mock_send.assert_called_once()
+        self.assertIn("VERDIGO KASH HUB",mock_send.call_args.args[1])
+
+    def test_followed_trader_shows_name_from_existing_snapshot(self):
+        s={"users":{"123":bot.defaults()},
+           "whale_tracker":{"markets":{MID:{"trade_count":10,"entries":{
+               TRADER:{"username":"Friendly Kash Trader","amount":50000000}}}}}}
+        hub.action("123","follow:"+TRADER,s,{},1000)
+        label,_=hub.render("watchtraders",s,"123",{},1010)
+        self.assertIn("Friendly Kash Trader",label)
+
 if __name__=="__main__":
     unittest.main()
