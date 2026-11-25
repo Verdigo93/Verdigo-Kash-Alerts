@@ -710,6 +710,34 @@ def show_whale_status(chat, state, markets):
          "<i>Snapshots are built gradually. This does not execute trades.</i>")
 
 
+def show_hub_status(chat, state, markets):
+    """Safe read-only diagnostics without a paid FadeHost terminal."""
+    cache = state.get("hub_market_cache", {})
+    news = state.get("hub_news", {})
+    prices = state.get("hub_prices", {})
+    results = state.get("hub_resolved", {})
+    def age(data):
+        t = data.get("checked_at") if isinstance(data, dict) else None
+        if not isinstance(t, (int, float)) or t <= 0:
+            return "Not yet"
+        return f"{max(0, int((time.time()-t)/60))} min ago"
+    market_cache = cache.get("data", {}) if isinstance(cache, dict) else {}
+    headlines = news.get("items", []) if isinstance(news, dict) else []
+    send(chat, "🟡 <b>KASH HUB STATUS</b>\n\n"
+         f"Live active markets: {len(markets)}\n"
+         f"Markets with public 24h data: {len(market_cache) if isinstance(market_cache, dict) else 0}\n"
+         f"Analytics cache checked: {age(cache)}\n"
+         f"Analytics error: {html.escape(str(cache.get('last_error') or 'None')) if isinstance(cache, dict) else 'Unknown'}\n"
+         f"Markets with price history: {len(prices) if isinstance(prices, dict) else 0}\n"
+         f"Official blog headlines cached: {len(headlines) if isinstance(headlines, list) else 0}\n"
+         f"Blog feed checked: {age(news)}\n"
+         f"Blog error: {html.escape(str(news.get('error') or 'None')) if isinstance(news, dict) else 'Unknown'}\n"
+         f"Resolved markets cached: {len(results.get('rows', [])) if isinstance(results,dict) else 0}\n"
+         "Daily digest and new-market alerts: opt-in.\n\n"
+         "<i>Read-only monitoring. Does not expose user IDs or secrets.</i>",
+         keyboard=[[{"text": "🏠 Main Menu", "callback_data": "hub:home"}]])
+
+
 def command(chat, text, state, markets):
     parts = text.strip().split()
     if not parts:
@@ -731,6 +759,8 @@ def command(chat, text, state, markets):
                   "/about": "about", "/watch": "watch",
                   "/digest": "alerts", "/results": "resolved"}[name]
         show_page(chat, target, state, markets)
+    elif name == "/hubstatus":
+        show_hub_status(chat, state, markets)
     elif name == "/ping":
         send(chat, "🏓 Pong! Verdigo Kash Alerts is responding.",
              keyboard=[[{"text": "🏠 Main Menu", "callback_data": "menu"}]])
@@ -1002,7 +1032,14 @@ def main():
                         cfg = user(state, cb_chat)
                         cfg["awaiting_volume"] = False
                         mid = (callback.get("message") or {}).get("message_id")
-                        show_page(cb_chat, "home", state, markets, mid)
+                        markup = ((callback.get("message") or {}).get("reply_markup") or {})
+                        market_alert = any(
+                            any("url" in button for button in row)
+                            for row in markup.get("inline_keyboard", [])
+                        ) if isinstance(markup, dict) else False
+                        # Preserve actual alert text when its Main Menu button is tapped.
+                        show_page(cb_chat, "home", state, markets,
+                                  None if market_alert else mid)
             save(state)
         except urllib.error.HTTPError as exc:
             # HTTPError contains a URL with the BotFather token. Log only the
