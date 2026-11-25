@@ -277,9 +277,9 @@ def volume_keyboard():
     ]
 
 
-def show_volume_menu(chat, state):
+def show_volume_menu(chat, state, message_id=None):
     cfg = user(state, chat)
-    send(chat,
+    ui_message(chat,
          "💵 <b>Market Volume Filter</b>\n\n"
          f"Current: <b>{html.escape(volume_label(cfg))}</b>\n\n"
          "Choose a range or enter your own amount. "
@@ -288,7 +288,7 @@ def show_volume_menu(chat, state):
          "⏰ Closing-time alerts are <b>not</b> filtered.\n\n"
          "Volume means the market's total reported trading volume in USDC, "
          "not the size of one trade.",
-         keyboard=volume_keyboard())
+         keyboard=volume_keyboard(), message_id=message_id)
 
 
 def volume_markets(chat, state, markets):
@@ -399,16 +399,17 @@ def settings_keyboard(cfg):
         [{"text": "▶️ Resume" if cfg["paused"] else "⏸ Pause", "callback_data": "toggle:pause"}],
         [{"text": "⏰ Next Closings", "callback_data": "soon"}],
         [{"text": "📊 Top Markets", "callback_data": "top"}],
+        [{"text": "◀️ Back to Alerts", "callback_data": "hub:alerts"}],
     ]
 
-def show_settings(chat, state):
+def show_settings(chat, state, message_id=None):
     cfg = user(state, chat)
-    send(chat, "⚙️ <b>Verdigo Kash Alerts — Settings</b>\n\n"
+    ui_message(chat, "⚙️ <b>Verdigo Kash Alerts — Settings</b>\n\n"
          "Choose your closing alerts and market activity notifications.\n"
          f"Volume range: {html.escape(volume_label(cfg))}\n"
          "Change it using 💵 Volume Filter.\n\n"
          "Alerts are informational, not trading advice.",
-         keyboard=settings_keyboard(cfg))
+         keyboard=settings_keyboard(cfg), message_id=message_id)
 
 
 def whale_keyboard(cfg):
@@ -428,9 +429,9 @@ def whale_keyboard(cfg):
     return rows
 
 
-def show_whale_menu(chat, state):
+def show_whale_menu(chat, state, message_id=None):
     cfg = user(state, chat)
-    send(chat, "🐋 <b>Whale Alerts</b>\n\n"
+    ui_message(chat, "🐋 <b>Whale Alerts</b>\n\n"
          "Receive alerts when a public trader's invested amount first appears "
          "or increases on a Kash market.\n\n"
          "Select one or more ranges for the <b>new investment</b>, not the full "
@@ -438,13 +439,13 @@ def show_whale_menu(chat, state):
          "Tracks up to 50 largest public positions per market. A leaderboard "
          "change is <b>not</b> proof of one trade or a human trader.\n\n"
          "Whale Alerts are ON by default. You can disable them here.",
-         keyboard=whale_keyboard(cfg))
+         keyboard=whale_keyboard(cfg), message_id=message_id)
 
 
-def whale_action(chat, action, state):
+def whale_action(chat, action, state, message_id=None):
     cfg = user(state, chat)
     if action == "back":
-        show_settings(chat, state)
+        show_settings(chat, state, message_id)
         return
     if action == "toggle":
         cfg["whale_enabled"] = not cfg.get("whale_enabled", True)
@@ -461,7 +462,7 @@ def whale_action(chat, action, state):
             else:
                 selected.add(band)
             cfg["whale_bands"] = [b for b in whale_alerts.BANDS if b in selected]
-    show_whale_menu(chat, state)
+    show_whale_menu(chat, state, message_id)
 
 
 def market_message(m, header, details):
@@ -478,7 +479,7 @@ def top_size_keyboard(selected):
           "callback_data": f"top:set:{n}"} for n in (5, 10)],
         [{"text": ("✅ " if n == selected else "") + f"Top {n}",
           "callback_data": f"top:set:{n}"} for n in (15, 20)],
-        [{"text": "🏠 Main Menu", "callback_data": "menu"}],
+        [{"text": "🏠 Main Menu", "callback_data": "hub:home"}],
     ]
 
 
@@ -492,6 +493,49 @@ def edit_bot_message(chat, message_id, text, keyboard):
         "disable_web_page_preview": True,
         "reply_markup": {"inline_keyboard": keyboard},
     })
+
+
+def ui_message(chat, text, keyboard, message_id=None):
+    """Telegram-native navigation: edit the same message instead of chat spam."""
+    if message_id is not None:
+        try:
+            edit_bot_message(chat, message_id, text, keyboard)
+            return
+        except urllib.error.HTTPError as exc:
+            # Old messages may be uneditable; use a new menu instead.
+            if exc.code != 400:
+                raise
+    send(chat, text, keyboard=keyboard)
+
+
+def show_page(chat, page, state, markets, message_id=None):
+    """Route new sections while preserving legacy buttons and commands."""
+    if page == "top":
+        top_menu(chat, state, message_id)
+        return
+    if page == "next":
+        next_closings(chat, markets)
+        return
+    if page == "oldsettings":
+        show_settings(chat, state, message_id)
+        return
+    if page == "oldwhales":
+        show_whale_menu(chat, state, message_id)
+        return
+    if page == "news":
+        title, keyboard = kash_news.news_page(state, time.time())
+    elif page == "resolved":
+        title, keyboard = kash_news.resolved_page(state, http_json, time.time())
+    else:
+        title, keyboard = kash_hub.render(page, state, chat, markets, time.time())
+    ui_message(chat, title, keyboard, message_id)
+
+
+def hub_action(chat, value, state, markets, message_id=None):
+    cfg = user(state, chat)
+    cfg["awaiting_volume"] = False
+    page = kash_hub.action(chat, value, state, markets, time.time())
+    show_page(chat, page, state, markets, message_id)
 
 
 def top_menu(chat, state, message_id=None):
@@ -550,7 +594,7 @@ def top_page_content(markets, limit, page):
         keyboard.append(nav)
     keyboard.append([{"text": "⚙️ Choose Top 5 / 10 / 15 / 20",
                       "callback_data": "top:choose"}])
-    keyboard.append([{"text": "🏠 Main Menu", "callback_data": "menu"}])
+    keyboard.append([{"text": "🏠 Main Menu", "callback_data": "hub:home"}])
     return text, keyboard
 
 
