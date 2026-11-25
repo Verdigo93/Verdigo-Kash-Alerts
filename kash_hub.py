@@ -293,7 +293,7 @@ def analytics(page,state,markets,now):
     return home()
 
 
-def watches(page,cfg,markets):
+def watches(page,cfg,markets,state):
     if page=="watch":
         n=len(cfg.get("hub_watch_markets",[]))
         t=len(cfg.get("hub_watch_traders",[]))
@@ -319,7 +319,16 @@ def watches(page,cfg,markets):
         if not isinstance(ids,list):
             ids=[]
         text="👀 <b>FOLLOWED PUBLIC TRADERS</b>\n\n"
-        text+="\n".join("• "+esc(x,40) for x in ids[:MAX_TRADERS]) if ids else (
+        labels={}
+        snapshots=state.get("whale_tracker",{}).get("markets",{})
+        if isinstance(snapshots,dict):
+            for snap in snapshots.values():
+                entries=snap.get("entries",{}) if isinstance(snap,dict) else {}
+                if isinstance(entries,dict):
+                    for uid,profile in entries.items():
+                        if uid in ids and isinstance(profile,dict):
+                            labels[uid]=profile.get("username") or profile.get("handle") or uid
+        text+="\n".join("• "+esc(labels.get(x) or x,60) for x in ids[:MAX_TRADERS]) if ids else (
             "No traders followed yet. Tap 👀 Follow Trader on a Whale Alert.")
         keys=[[button("❌ Unfollow #"+str(i),"unfollow:"+uid)]
               for i,uid in enumerate(ids[:MAX_TRADERS],1) if is_uuid(uid)]
@@ -333,10 +342,12 @@ def alerts(cfg):
             "Your existing closing, volume, activity and Whale Alerts stay intact.\n\n"
             "☀️ Daily Kash Digest (09:00 UTC): "+("✅ ON" if cfg.get("hub_digest_enabled") else "⬜ OFF")+
             "\n📰 New Kash blog posts: "+("✅ ON" if cfg.get("hub_news_enabled") else "⬜ OFF")+
+            "\n🆕 New market alerts: "+("✅ ON" if cfg.get("hub_new_markets_enabled") else "⬜ OFF")+
             "\n🔕 All alerts: "+("PAUSED" if cfg.get("paused") else "ACTIVE")), [[button("⏰ Closing / Volume / Activity","oldsettings")],
          [button("🐋 Whale Alerts","oldwhales")],
          [button("☀️ Toggle Daily Digest","digest")],
          [button("📰 Toggle Blog Notifications","newsalert")],
+         [button("🆕 Toggle New Market Alerts","newmarkets")],
          [button("⏸ Pause / Resume","pause")],
          [button("🏠 Main Menu","home")]]
 
@@ -352,7 +363,7 @@ def render(page,state,chat,markets,now):
     if page in ("analytics","top24","movers","move15","move60","move1440","categories","traders"):
         return analytics(page,state,markets,now)
     if page in ("watch","watchmarkets","watchtraders"):
-        return watches(page,cfg,markets)
+        return watches(page,cfg,markets,state)
     return home()
 
 
@@ -369,6 +380,9 @@ def action(chat,data,state,markets,now):
     if data=="newsalert":
         cfg["hub_news_enabled"]=not cfg.get("hub_news_enabled",False)
         cfg["hub_news_initialized"]=False
+        return "alerts"
+    if data=="newmarkets":
+        cfg["hub_new_markets_enabled"]=not cfg.get("hub_new_markets_enabled",False)
         return "alerts"
     if data=="pause":
         cfg["paused"]=not cfg.get("paused",False)
@@ -416,3 +430,33 @@ def poll_digest(state,markets,send,now):
         except Exception:
             continue
         cfg["hub_digest_last_day"]=day
+
+
+def poll_new_markets(state,markets,send,now):
+    """Opt-in, silent initial baseline, bounded alerts for newly discovered markets."""
+    current={mid for mid,m in markets.items()
+             if is_uuid(mid) and m.get("url") and m.get("tradeable",True)}
+    if not state.get("hub_market_baseline_ready",False):
+        state["hub_known_market_ids"]=sorted(current)
+        state["hub_market_baseline_ready"]=True
+        return
+    known=state.get("hub_known_market_ids",[])
+    if not isinstance(known,list):
+        known=[]
+    unseen=sorted(current-set(known))
+    state["hub_known_market_ids"]=sorted((set(known)|current))[-1000:]
+    if not unseen:
+        return
+    chosen=unseen[:3]
+    body="🆕 <b>NEWLY DISCOVERED KASH MARKETS</b>\n\n"
+    body+="\n\n".join("• "+market_link(markets[mid]) for mid in chosen)
+    if len(unseen)>len(chosen):
+        body+="\n\n+"+str(len(unseen)-len(chosen))+" additional new markets."
+    body+="\n\n<i>New to monitoring; not necessarily created right now.</i>"
+    for chat,cfg in state.get("users",{}).items():
+        if not cfg.get("hub_new_markets_enabled") or cfg.get("paused") or cfg.get("delivery_disabled"):
+            continue
+        try:
+            send(chat,body,keyboard=[[button("📊 Analytics","analytics")]])
+        except Exception:
+            continue
