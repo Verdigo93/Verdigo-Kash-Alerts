@@ -68,6 +68,7 @@ def defaults():
             "whale_new": True, "whale_increase": True,
             "whale_bands": list(whale_alerts.DEFAULT_BANDS),
             "hub_digest_enabled": False, "hub_news_enabled": False,
+            "hub_new_markets_enabled": False,
             "hub_watch_markets": [], "hub_watch_traders": []}
 
 def load():
@@ -515,7 +516,22 @@ def show_page(chat, page, state, markets, message_id=None):
         top_menu(chat, state, message_id)
         return
     if page == "next":
-        next_closings(chat, markets)
+        now = time.time()
+        nearby = sorted(
+            (m for m in markets.values() if m.get("url") and m.get("close")
+             and m["close"] > now),
+            key=lambda m: m["close"])[:5]
+        if nearby:
+            content = "⏰ <b>NEXT KASH TRADING FREEZES</b>\n\n" + "\n\n".join(
+                "• <a href=\"" + html.escape(m["url"], quote=True) + "\">" +
+                html.escape(str(m["title"])[:100]) + "</a>\n" +
+                "⏳ About " + str(max(1, round((m["close"] - now) / 60))) + " min"
+                for m in nearby)
+        else:
+            content = "⏰ No upcoming tradable market freeze times are available."
+        ui_message(chat, content,
+                   [[{"text": "🏠 Main Menu", "callback_data": "hub:home"}]],
+                   message_id)
         return
     if page == "oldsettings":
         show_settings(chat, state, message_id)
@@ -701,9 +717,6 @@ def command(chat, text, state, markets):
     name = parts[0].split("@")[0].lower()
     cfg = user(state, chat)
     if name == "/start":
-        send(chat, "👋 <b>Welcome to Verdigo Kash Hub!</b>\n\n"
-             "Explore Kash markets, monitor public positions and read project updates.\n"
-             "All features are free and require no wallet connection.")
         show_page(chat, "home", state, markets)
     elif name in ("/menu", "/home", "/help"):
         cfg["awaiting_volume"] = False
@@ -913,6 +926,7 @@ def main():
                     kash_hub.record_prices(state, markets, now)
                     kash_hub.poll_digest(state, markets, send, now)
                     kash_news.poll(state, send, now)
+                    kash_hub.poll_new_markets(state, markets, send, now)
                 except Exception as exc:
                     logging.warning("Kash Hub additional features skipped: %s", type(exc).__name__)
                 try:
