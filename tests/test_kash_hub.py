@@ -209,5 +209,19 @@ class AdditionalIntegrationTests(unittest.TestCase):
         label,_=hub.render("watchtraders",s,"123",{},1010)
         self.assertIn("Friendly Kash Trader",label)
 
+
+class HubStatusTests(unittest.TestCase):
+    def test_hubstatus_reports_safe_counts_without_ids(self):
+        state={"users":{},"hub_market_cache":{"checked_at":1000,
+               "data":{MID:{"volume_24h":20}}},"hub_news":{"checked_at":1000,
+               "items":[{"title":"Blog","link":"https://blog.kash.bot/post"}]}}
+        with patch.object(bot,"send") as send, patch.object(bot.time,"time",return_value=1060):
+            bot.command("123","/hubstatus",state,{MID:market()})
+        message=send.call_args.args[1]
+        self.assertIn("KASH HUB STATUS",message)
+        self.assertIn("Markets with public 24h data: 1",message)
+        self.assertIn("Official blog headlines cached: 1",message)
+        self.assertNotIn(MID,message)
+
 if __name__=="__main__":
     unittest.main()
