@@ -536,7 +536,9 @@ def hub_action(chat, value, state, markets, message_id=None):
     cfg = user(state, chat)
     cfg["awaiting_volume"] = False
     page = kash_hub.action(chat, value, state, markets, time.time())
-    show_page(chat, page, state, markets, message_id)
+    # Keep the original Whale Alert visible when following its trader.
+    show_page(chat, page, state, markets,
+              None if value.startswith("follow:") else message_id)
 
 
 def top_menu(chat, state, message_id=None):
