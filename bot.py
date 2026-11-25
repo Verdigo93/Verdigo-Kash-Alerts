@@ -353,7 +353,7 @@ def handle_volume_reply(chat, message, state):
     return True
 
 
-def volume_action(chat, action, state, markets):
+def volume_action(chat, action, state, markets, message_id=None):
     cfg = user(state, chat)
     presets = {
         "under10": (0, 10),
@@ -366,8 +366,9 @@ def volume_action(chat, action, state, markets):
     if action in presets:
         cfg["min_volume"], cfg["max_volume"] = presets[action]
         cfg["awaiting_volume"] = False
-        send(chat, f"✅ Volume filter saved: {html.escape(volume_label(cfg))}")
-        show_volume_menu(chat, state)
+        if message_id is None:
+            send(chat, f"✅ Volume filter saved: {html.escape(volume_label(cfg))}")
+        show_volume_menu(chat, state, message_id)
     elif action == "custom":
         cfg["awaiting_volume"] = True
         send(chat,
@@ -382,7 +383,7 @@ def volume_action(chat, action, state, markets):
         volume_markets(chat, state, markets)
     elif action == "back":
         cfg["awaiting_volume"] = False
-        show_settings(chat, state)
+        show_settings(chat, state, message_id)
     elif action == "menu":
         show_volume_menu(chat, state)
 
@@ -698,13 +699,23 @@ def command(chat, text, state, markets):
     name = parts[0].split("@")[0].lower()
     cfg = user(state, chat)
     if name == "/start":
-        send(chat, "👋 <b>Welcome to Verdigo Kash Alerts!</b>\n\n"
-             "Free Kash market monitoring: closing alerts, high volume and activity spikes.\n"
-             "No wallet or trading API key required.")
-        show_settings(chat, state)
-    elif name in ("/settings", "/help", "/menu", "/home"):
+        send(chat, "👋 <b>Welcome to Verdigo Kash Hub!</b>\n\n"
+             "Explore Kash markets, monitor public positions and read project updates.\n"
+             "All features are free and require no wallet connection.")
+        show_page(chat, "home", state, markets)
+    elif name in ("/menu", "/home", "/help"):
         cfg["awaiting_volume"] = False
+        show_page(chat, "home", state, markets)
+    elif name == "/settings":
+        cfg["awaiting_volume"] = False
+        show_page(chat, "alerts", state, markets)
+    elif name == "/legacysettings":
         show_settings(chat, state)
+    elif name in ("/analytics", "/news", "/about", "/watch", "/digest", "/results"):
+        target = {"/analytics": "analytics", "/news": "news",
+                  "/about": "about", "/watch": "watch",
+                  "/digest": "alerts", "/results": "resolved"}[name]
+        show_page(chat, target, state, markets)
     elif name == "/ping":
         send(chat, "🏓 Pong! Verdigo Kash Alerts is responding.",
              keyboard=[[{"text": "🏠 Main Menu", "callback_data": "menu"}]])
@@ -764,7 +775,7 @@ def command(chat, text, state, markets):
              f"Alerts: {'paused' if cfg.get('paused') else 'active'}\n"
              "Closing alerts use the trade-freeze time from Kash.")
 
-def toggle(chat, action, state, markets):
+def toggle(chat, action, state, markets, message_id=None):
     cfg = user(state, chat)
     if action in ("15", "30", "60"):
         n = int(action)
@@ -781,7 +792,7 @@ def toggle(chat, action, state, markets):
         return
     elif action in ("menu", "home"):
         cfg["awaiting_volume"] = False
-    show_settings(chat, state)
+    show_settings(chat, state, message_id)
 
 def scan_subscriber(chat, cfg, state, markets, now, seen_volumes,
                     volume_baseline_ready):
@@ -896,6 +907,13 @@ def main():
                 state["last_market_error"] = None
                 scan(state, markets, now)
                 try:
+                    kash_hub.enhance_market_details(state, markets, http_json, now)
+                    kash_hub.record_prices(state, markets, now)
+                    kash_hub.poll_digest(state, markets, send, now)
+                    kash_news.poll(state, send, now)
+                except Exception as exc:
+                    logging.warning("Kash Hub additional features skipped: %s", type(exc).__name__)
+                try:
                     whale_alerts.poll(state, markets, send, now=now)
                 except Exception as exc:
                     logging.warning("Whale scan skipped: %s", type(exc).__name__)
@@ -917,7 +935,8 @@ def main():
                     name = incoming.casefold()
                     if name in ("settings", "menu", "home"):
                         cfg["awaiting_volume"] = False
-                        show_settings(chat, state)
+                        show_page(chat, "home" if name != "settings" else "alerts",
+                                  state, markets)
                     elif name == "start":
                         cfg["awaiting_volume"] = False
                         command(chat, "/start", state, markets)
@@ -926,7 +945,7 @@ def main():
                     elif incoming.startswith("/"):
                         command(chat, incoming, state, markets)
                     elif not handle_volume_reply(chat, incoming, state):
-                        send(chat, "Use /settings to open the main menu.",
+                        send(chat, "Use /menu to open the main menu.",
                              keyboard=[[{"text": "🏠 Main Menu", "callback_data": "menu"}]])
                 callback = update.get("callback_query") or {}
                 if callback:
@@ -938,13 +957,24 @@ def main():
                     if cb_chat:
                         user(state, cb_chat).pop("delivery_disabled", None)
                     if cb_chat and callback.get("data", "").startswith("toggle:"):
-                        toggle(cb_chat, callback["data"].split(":", 1)[1], state, markets)
+                        mid = (callback.get("message") or {}).get("message_id")
+                        toggle(cb_chat, callback["data"].split(":", 1)[1],
+                               state, markets, mid)
                     elif cb_chat and callback.get("data", "").startswith("vol:"):
-                        volume_action(cb_chat, callback["data"].split(":", 1)[1], state, markets)
+                        mid = (callback.get("message") or {}).get("message_id")
+                        volume_action(cb_chat, callback["data"].split(":", 1)[1],
+                                      state, markets, mid)
                     elif cb_chat and callback.get("data", "").startswith("whale:"):
-                        whale_action(cb_chat, callback["data"].split(":", 1)[1], state)
+                        mid = (callback.get("message") or {}).get("message_id")
+                        whale_action(cb_chat, callback["data"].split(":", 1)[1],
+                                     state, mid)
+                    elif cb_chat and callback.get("data", "").startswith("hub:"):
+                        mid = (callback.get("message") or {}).get("message_id")
+                        hub_action(cb_chat, callback["data"].split(":", 1)[1],
+                                   state, markets, mid)
                     elif cb_chat and callback.get("data") == "top":
-                        top_menu(cb_chat, state)
+                        mid = (callback.get("message") or {}).get("message_id")
+                        top_menu(cb_chat, state, mid)
                     elif cb_chat and callback.get("data", "").startswith("top:"):
                         msg_id = (callback.get("message") or {}).get("message_id")
                         if isinstance(msg_id, int):
@@ -955,7 +985,8 @@ def main():
                     elif cb_chat and callback.get("data") == "menu":
                         cfg = user(state, cb_chat)
                         cfg["awaiting_volume"] = False
-                        show_settings(cb_chat, state)
+                        mid = (callback.get("message") or {}).get("message_id")
+                        show_page(cb_chat, "home", state, markets, mid)
             save(state)
         except urllib.error.HTTPError as exc:
             # HTTPError contains a URL with the BotFather token. Log only the
