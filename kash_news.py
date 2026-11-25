@@ -61,7 +61,7 @@ def refresh(state,now,fetcher=None):
     cache=state.setdefault("hub_news",{})
     if not isinstance(cache,dict):
         state["hub_news"]=cache={}
-    if now-cache.get("checked_at",0)<CACHE:
+    if "checked_at" in cache and now-cache.get("checked_at",0)<CACHE:
         return cache.get("items",[])
     cache["checked_at"]=now
     try:
@@ -132,7 +132,7 @@ def resolved_page(state,http_json,now):
     """Requested by a user only: no expensive continuous resolved-market polling."""
     from kash_hub import button,is_uuid
     cache=state.setdefault("hub_resolved",{})
-    if now-cache.get("checked_at",0)>=CACHE:
+    if "checked_at" not in cache or now-cache.get("checked_at",0)>=CACHE:
         cache["checked_at"]=now
         try:
             payload=http_json(RESOLVED_URL,params={
