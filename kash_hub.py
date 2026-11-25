@@ -72,8 +72,7 @@ def about(page):
     if page=="about":
         return ("ℹ️ <b>ABOUT KASH</b>\n\n"
                 "Kash brings social prediction markets to conversations and news.\n\n"
-                "Explore the team, verified financing information, official links and guides."),
-            [[button("❓ What is Kash?","what")],
+                "Explore the team, verified financing information, official links and guides."), [[button("❓ What is Kash?","what")],
              [button("👥 Team & Founders","team")],
              [button("💰 Funding & Investors","funding")],
              [button("🌐 Official Links","links")],
@@ -85,16 +84,14 @@ def about(page):
                 "People can create or trade markets about real events including sports, crypto and culture.\n\n"
                 "The platform integrates markets into social feeds with on-chain execution. "
                 "Market prices express implied probabilities, not guaranteed outcomes.\n\n"
-                "Learn more on the official site."),
-            [[button("🌐 Official Website",url="https://www.kash.bot/")],nav("about")]
+                "Learn more on the official site."), [[button("🌐 Official Website",url="https://www.kash.bot/")],nav("about")]
     if page=="how":
         return ("📖 <b>HOW KASH WORKS</b>\n\n"
                 "1️⃣ Discover or create a prediction market.\n"
                 "2️⃣ Read the rules and trading deadline.\n"
                 "3️⃣ Select an outcome and review the price.\n"
                 "4️⃣ Follow the market to settlement.\n\n"
-                "Trading involves risk. Always check the market's settlement rules."),
-            [[button("📚 Official FAQ",url="https://www.kash.bot/faq"),
+                "Trading involves risk. Always check the market's settlement rules."), [[button("📚 Official FAQ",url="https://www.kash.bot/faq"),
               button("🚀 Trading App",url="https://app.kash.bot/")],nav("about")]
     if page=="team":
         text="👥 <b>KASH TEAM</b>\n\n"
@@ -116,8 +113,7 @@ def about(page):
     if page=="links":
         return ("🌐 <b>OFFICIAL KASH LINKS</b>\n\n"
                 "Quick access to the project and public communities.\n"
-                "<i>Discord invite provided by the community; access may expire.</i>"),
-            [[button("🌍 Website",url="https://www.kash.bot/"),
+                "<i>Discord invite provided by the community; access may expire.</i>"), [[button("🌍 Website",url="https://www.kash.bot/"),
               button("🚀 Trading App",url="https://app.kash.bot/")],
              [button("𝕏 Official X",url="https://x.com/kash_bot"),
               button("💬 Discord",url="https://discord.gg/ZnrTzKumWh")],
@@ -246,8 +242,7 @@ def analytics(page,state,markets,now):
     if page=="analytics":
         return ("📊 <b>MARKET ANALYTICS</b>\n\n"
                 "Explore Kash trading activity, volume and probability changes.\n"
-                "<i>Data may be cached; analytics are not trading signals.</i>"),
-            [[button("🔥 Top Volume · 24h","top24")],
+                "<i>Data may be cached; analytics are not trading signals.</i>"), [[button("🔥 Top Volume · 24h","top24")],
              [button("📈 Price Movers","movers")],
              [button("🏆 Market Categories","categories")],
              [button("👥 Trader Activity","traders")],
@@ -262,8 +257,7 @@ def analytics(page,state,markets,now):
     if page=="movers":
         return ("📈 <b>PRICE MOVERS</b>\n\n"
                 "Biggest changes in implied YES probability.\n"
-                "History is collected gradually after deployment."),
-            [[button("⏱ 15 min","move15"),button("🕐 1 hour","move60")],
+                "History is collected gradually after deployment."), [[button("⏱ 15 min","move15"),button("🕐 1 hour","move60")],
              [button("🗓 24 hours","move1440")],nav("analytics")]
     if page in ("move15","move60","move1440"):
         mins=int(page[4:])
@@ -306,8 +300,7 @@ def watches(page,cfg,markets):
         return ("⭐ <b>MY WATCHLISTS</b>\n\nSaved markets: "+str(n)+"/12\n"
                 "Followed public traders: "+str(t)+"/10\n\n"
                 "Add markets from Analytics or traders from Whale Alerts.\n"
-                "<i>Public top-50 leaderboard coverage is not complete trade history.</i>"),
-            [[button("⭐ Saved Markets","watchmarkets")],
+                "<i>Public top-50 leaderboard coverage is not complete trade history.</i>"), [[button("⭐ Saved Markets","watchmarkets")],
              [button("👀 Followed Traders","watchtraders")],
              [button("📊 Browse Markets","top24")],[button("🏠 Main Menu","home")]]
     if page=="watchmarkets":
@@ -340,8 +333,7 @@ def alerts(cfg):
             "Your existing closing, volume, activity and Whale Alerts stay intact.\n\n"
             "☀️ Daily Kash Digest (09:00 UTC): "+("✅ ON" if cfg.get("hub_digest_enabled") else "⬜ OFF")+
             "\n📰 New Kash blog posts: "+("✅ ON" if cfg.get("hub_news_enabled") else "⬜ OFF")+
-            "\n🔕 All alerts: "+("PAUSED" if cfg.get("paused") else "ACTIVE")),
-        [[button("⏰ Closing / Volume / Activity","oldsettings")],
+            "\n🔕 All alerts: "+("PAUSED" if cfg.get("paused") else "ACTIVE")), [[button("⏰ Closing / Volume / Activity","oldsettings")],
          [button("🐋 Whale Alerts","oldwhales")],
          [button("☀️ Toggle Daily Digest","digest")],
          [button("📰 Toggle Blog Notifications","newsalert")],
