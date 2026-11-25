@@ -16,7 +16,7 @@ An English-language Telegram bot for tracking Kash prediction markets (read-only
 - Resilient multi-user delivery: a blocked Telegram user (HTTP 403) cannot interrupt other subscribers' alerts
 - `/status` shows last successful Kash fetch and whether the latest Kash request failed
 - No trading, no wallet connection, no write-capable Kash key
-- **Whale Alerts (enabled by default, optional opt-out)** (`/whales`): newly observed large positions and increases in a public trader's invested amount, with independent $20–50, $50–100, $100–500, $500–1,000 and $1,000+ filters. Disabled by default.
+- **Whale Alerts (enabled by default, optional opt-out)** (`/whales`): newly observed large positions and increases in a public trader's invested amount, with independent $20–50, $50–100, $100–500, $500–1,000 and $1,000+ filters. Enabled by default (each user can switch it off).
 - Public profiles and primary outcomes appear when Kash exposes them. These do **not** prove a trader is human or that the change is one individual buy.
 
 
@@ -25,7 +25,7 @@ An English-language Telegram bot for tracking Kash prediction markets (read-only
 1. Download ZIP from this repository (Code → Download ZIP), then extract.
 2. Double-click `START_LOCAL.cmd`.
 3. Paste your **BotFather Telegram token** and **read-only Kash API key** in the two private pop-up dialogs. These values are not saved to disk.
-4. Open [@VerdigoKashAlertsBot](https://t.me/VerdigoKashAlertsBot) in Telegram, send `/start`, and then `/settings`, `/soon`, `/status`, or `/top`. Tap **Top Markets**, choose 5/10/15/20, then use **Next** and **Previous**; `/top 20` opens a list directly.
+4. Open [@VerdigoKashAlertsBot](https://t.me/VerdigoKashAlertsBot) in Telegram, send /start, then /menu, /settings, /analytics, /about, /news, /watch, /soon, /status, or /top. Tap **Top Markets**, choose 5/10/15/20, then use **Next** and **Previous**; `/top 20` opens a list directly.
 5. Keep the command window open while testing. Close it to stop the bot.
 
 Never paste keys into GitHub, Telegram chats, screenshots, or the Windows command line. Kash key only needs `markets:read`.
@@ -60,6 +60,27 @@ Implementation uses Kash's public market-state `tradeCount` to choose changed ma
 
 **Safety & performance:** Whale Alerts make **zero** extra API requests whenever all subscribers explicitly disable them (or none are subscribed). For enabled users, an initial baseline is silently learned (at most **3 extra leaderboard requests per 60-second scan**), so on a busy set of markets this can take several scans. There are at most **5 whale notifications per subscriber per scan**, a read-only HTTP 429/503 backoff, and deduplication via the existing `state.json`. No write API, wallet or additional scopes are required; existing closing and volume alerts remain unchanged.
 
-**Deployment:** Keep `whale_alerts.py` alongside `bot.py`. Back up the persistent `state.json`, deploy the updated files, restart one worker, then verify or disable the feature using `/whales`. A stopped old process must not resume with the same Telegram token. The existing `KASH_API_KEY` requires only `markets:read` for the regular markets list; the whale leaderboard is public. Do not upload secrets or `data/` to GitHub.
+**Deployment:** Keep whale_alerts.py, kash_hub.py and kash_news.py alongside bot.py. Back up the persistent `state.json`, deploy the updated files, restart one worker, then verify or disable the feature using `/whales`. A stopped old process must not resume with the same Telegram token. The existing `KASH_API_KEY` requires only `markets:read` for the regular markets list; the whale leaderboard is public. Do not upload secrets or `data/` to GitHub.
 
 Docs: [Kash public leaderboard](https://docs.kash.bot/developer-docs/public-embed-api/endpoints/market-leaderboard) · [Kash public market state](https://docs.kash.bot/developer-docs/public-embed-api/endpoints/markets-state)
+
+
+## Kash Hub — compact menus and read-only extensions
+
+**Main screen:** /start and /menu open a tidy four-section menu. Telegram callbacks edit the same menu message in place when possible, rather than continually sending new menus. Existing alerts and commands remain available.
+
+- **Market Analytics** (/analytics): top 24-hour USDC-volume markets (separate from the lifetime /top list), biggest probability moves over 15m/60m/24h, categories, participant counts, and a resolved-markets preview. Price movements need their requested history interval to elapse after deployment. Cached public market details refresh at most every 10 minutes.
+- **Whale and Trader Watchlists** (/whales, /watch): the existing whale scanner works as before. The Follow Trader button on Whale Alerts (when a valid public UUID exists) lets a user follow up to ten public profiles, with tracked investment increases of at least $5. The API only exposes top-50 positions per market, snapshots may lag, and accounts may be automated.
+- **Saved Markets** (/watch): save up to 12 active markets directly from Analytics and revisit or remove them.
+- **Kash News** (/news): official Kash blog RSS headlines (https://blog.kash.bot/feed.xml) with a 30-minute cache. Automatic alerts are opt-in and silently baseline existing headlines. X and Discord are linked but never scraped.
+- **About Kash** (/about): overview, project guide, team, official URLs, public funding announcement and investor list. Kash announced a total $2 million pre-seed on 24 February 2026; individual investments are not verified. Roles may change; the official team page is linked.
+- **Alerts & Filters** (/settings): existing 15/30/60-minute closing, volume, activity and Whale settings remain accessible. Optional blog alerts, new-market alerts and a daily digest at 09:00 UTC are disabled by default. New-market alerts learn a first baseline silently and notify on newly discovered tradeable markets only.
+- **Recent Resolutions** (/results): on-demand cached public resolved-market results.
+
+New modules use only Python standard library; no wallet or trading permissions. State is persisted in existing STATE_FILE with bounded 25-hour / 5-minute probability history (up to 250 active markets). News and results are cached. External text is HTML-escaped; menu callback IDs respect Telegram's 64-byte limit.
+
+**UI accuracy:** Branded images shown in design mockups are aspirational. Native Telegram inline buttons cannot be arbitrarily colored or animated. These features use actual inline keyboards, HTML-formatted messages and in-place editing. A fully custom animated dashboard would require a Telegram Mini App, not just a chat bot.
+
+**Quote / price impact:** An exact trade price-impact simulator requires an extra Kash markets:quote API scope. It is intentionally not enabled on the current read-only key.
+
+**Safe FadeHost rollout:** Download a fresh backup of /data/state.json before redeploy. Install latest main with one Telegram polling worker using Redeploy (pull latest). Test /menu, /settings, /whales, /whalestatus, /analytics, /news, /about, /watch and /results. Keep the previous working deployment available for rollback.

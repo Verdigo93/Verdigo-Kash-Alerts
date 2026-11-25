@@ -135,7 +135,7 @@ def poll(state, markets, send, now=None, fetch=None):
     """
     enabled = [
         (chat, cfg) for chat, cfg in state.get("users", {}).items()
-        if cfg.get("whale_enabled", True)
+        if (cfg.get("whale_enabled", True) or cfg.get("hub_watch_traders"))
         and not cfg.get("paused", False)
         and not cfg.get("delivery_disabled", False)
     ]
@@ -217,17 +217,31 @@ def poll(state, markets, send, now=None, fetch=None):
                 for chat, cfg in enabled:
                     if sends_per_chat[chat] >= MAX_ALERTS_PER_SUBSCRIBER:
                         continue
-                    if event["kind"] == "new" and not cfg.get("whale_new", True):
-                        continue
-                    if event["kind"] == "increase" and not cfg.get("whale_increase", True):
-                        continue
-                    if not matches_bands(event["delta"] / 1_000_000, cfg):
+                    following = event["user_id"] in cfg.get("hub_watch_traders", [])
+                    regular = (cfg.get("whale_enabled", True)
+                               and (event["kind"] != "new" or cfg.get("whale_new", True))
+                               and (event["kind"] != "increase" or cfg.get("whale_increase", True))
+                               and matches_bands(event["delta"] / 1_000_000, cfg))
+                    if not (regular or (following and event["delta"] >= 5_000_000)):
                         continue
                     key = f"whale:{mid}:{event['user_id']}:{event['current']}:{chat}"
                     if key in state.setdefault("sent", {}):
                         continue
                     try:
-                        send(chat, format_alert(market, event), market)
+                        import uuid
+                        following_button = None
+                        try:
+                            trader_uuid = str(uuid.UUID(event["user_id"]))
+                        except (ValueError, TypeError, AttributeError):
+                            trader_uuid = None
+                        if trader_uuid and len("hub:follow:" + trader_uuid) <= 64:
+                            following_button = [[{
+                                "text": "✅ Following Trader" if following else "👀 Follow Trader",
+                                "callback_data": "hub:follow:" + trader_uuid
+                            }]]
+                        heading = "👀 <b>FOLLOWED TRADER UPDATE</b>\n\n" if following else ""
+                        send(chat, heading + format_alert(market, event), market,
+                             keyboard=following_button)
                     except urllib.error.HTTPError as exc:
                         if exc.code == 403:
                             cfg["delivery_disabled"] = True

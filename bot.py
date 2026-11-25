@@ -13,6 +13,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import whale_alerts
+import kash_hub
+import kash_news
 
 def load_private_credentials(path=None):
     """Optional private config for hosts that cannot add arbitrary env vars.
@@ -64,7 +66,10 @@ def defaults():
             "min_volume": 10000, "max_volume": None, "paused": False,
             "top_limit": 5, "whale_enabled": True,
             "whale_new": True, "whale_increase": True,
-            "whale_bands": list(whale_alerts.DEFAULT_BANDS)}
+            "whale_bands": list(whale_alerts.DEFAULT_BANDS),
+            "hub_digest_enabled": False, "hub_news_enabled": False,
+            "hub_new_markets_enabled": False,
+            "hub_watch_markets": [], "hub_watch_traders": []}
 
 def load():
     try:
@@ -132,7 +137,9 @@ def normalize(item):
             pass
     return {"id": market_id, "title": title, "close": close, "volume": volume,
             "url": url, "status": str(item.get("status") or "").upper(),
-            "tradeable": item.get("tradeable") is True}
+            "tradeable": item.get("tradeable") is True,
+            "category": str(item.get("category") or "")[:70],
+            "categoryLabel": str(item.get("category") or "")[:70]}
 
 def fetch_markets():
     if not KASH_KEY:
@@ -194,6 +201,13 @@ def enrich_with_market_state(markets):
                 mid = raw.get("id")
                 if mid not in markets:
                     continue
+                participant_count = raw.get("participantCount")
+                if (isinstance(participant_count, int) and not isinstance(participant_count, bool)
+                        and participant_count >= 0):
+                    markets[mid]["participant_count"] = participant_count
+                probability = numeric(raw.get("currentImpliedChance"))
+                if probability is not None and 0 <= probability <= 1:
+                    markets[mid]["implied_yes"] = probability
                 # Public batch state also tells us whether a market received trades.
                 # Absence means whale tracking skips that market safely.
                 trade_count = raw.get("tradeCount")
@@ -216,9 +230,11 @@ def send(chat, message, market=None, keyboard=None):
     data = {"chat_id": chat, "text": message, "parse_mode": "HTML",
             "disable_web_page_preview": True}
     if market and market.get("url"):
-        data["reply_markup"] = {"inline_keyboard": [
-            [{"text": "🔗 View Market on Kash", "url": market["url"]}],
-            [{"text": "🏠 Main Menu", "callback_data": "menu"}]]}
+        rows = [[{"text": "🔗 View Market on Kash", "url": market["url"]}]]
+        if keyboard:
+            rows.extend(keyboard)
+        rows.append([{"text": "🏠 Main Menu", "callback_data": "menu"}])
+        data["reply_markup"] = {"inline_keyboard": rows}
     elif keyboard:
         data["reply_markup"] = {"inline_keyboard": keyboard}
     telegram("sendMessage", data)
@@ -262,9 +278,9 @@ def volume_keyboard():
     ]
 
 
-def show_volume_menu(chat, state):
+def show_volume_menu(chat, state, message_id=None):
     cfg = user(state, chat)
-    send(chat,
+    ui_message(chat,
          "💵 <b>Market Volume Filter</b>\n\n"
          f"Current: <b>{html.escape(volume_label(cfg))}</b>\n\n"
          "Choose a range or enter your own amount. "
@@ -273,7 +289,7 @@ def show_volume_menu(chat, state):
          "⏰ Closing-time alerts are <b>not</b> filtered.\n\n"
          "Volume means the market's total reported trading volume in USDC, "
          "not the size of one trade.",
-         keyboard=volume_keyboard())
+         keyboard=volume_keyboard(), message_id=message_id)
 
 
 def volume_markets(chat, state, markets):
@@ -338,7 +354,7 @@ def handle_volume_reply(chat, message, state):
     return True
 
 
-def volume_action(chat, action, state, markets):
+def volume_action(chat, action, state, markets, message_id=None):
     cfg = user(state, chat)
     presets = {
         "under10": (0, 10),
@@ -351,8 +367,9 @@ def volume_action(chat, action, state, markets):
     if action in presets:
         cfg["min_volume"], cfg["max_volume"] = presets[action]
         cfg["awaiting_volume"] = False
-        send(chat, f"✅ Volume filter saved: {html.escape(volume_label(cfg))}")
-        show_volume_menu(chat, state)
+        if message_id is None:
+            send(chat, f"✅ Volume filter saved: {html.escape(volume_label(cfg))}")
+        show_volume_menu(chat, state, message_id)
     elif action == "custom":
         cfg["awaiting_volume"] = True
         send(chat,
@@ -367,9 +384,9 @@ def volume_action(chat, action, state, markets):
         volume_markets(chat, state, markets)
     elif action == "back":
         cfg["awaiting_volume"] = False
-        show_settings(chat, state)
+        show_settings(chat, state, message_id)
     elif action == "menu":
-        show_volume_menu(chat, state)
+        show_volume_menu(chat, state, message_id)
 
 
 def settings_keyboard(cfg):
@@ -384,16 +401,17 @@ def settings_keyboard(cfg):
         [{"text": "▶️ Resume" if cfg["paused"] else "⏸ Pause", "callback_data": "toggle:pause"}],
         [{"text": "⏰ Next Closings", "callback_data": "soon"}],
         [{"text": "📊 Top Markets", "callback_data": "top"}],
+        [{"text": "◀️ Back to Alerts", "callback_data": "hub:alerts"}],
     ]
 
-def show_settings(chat, state):
+def show_settings(chat, state, message_id=None):
     cfg = user(state, chat)
-    send(chat, "⚙️ <b>Verdigo Kash Alerts — Settings</b>\n\n"
+    ui_message(chat, "⚙️ <b>Verdigo Kash Alerts — Settings</b>\n\n"
          "Choose your closing alerts and market activity notifications.\n"
          f"Volume range: {html.escape(volume_label(cfg))}\n"
          "Change it using 💵 Volume Filter.\n\n"
          "Alerts are informational, not trading advice.",
-         keyboard=settings_keyboard(cfg))
+         keyboard=settings_keyboard(cfg), message_id=message_id)
 
 
 def whale_keyboard(cfg):
@@ -413,9 +431,9 @@ def whale_keyboard(cfg):
     return rows
 
 
-def show_whale_menu(chat, state):
+def show_whale_menu(chat, state, message_id=None):
     cfg = user(state, chat)
-    send(chat, "🐋 <b>Whale Alerts</b>\n\n"
+    ui_message(chat, "🐋 <b>Whale Alerts</b>\n\n"
          "Receive alerts when a public trader's invested amount first appears "
          "or increases on a Kash market.\n\n"
          "Select one or more ranges for the <b>new investment</b>, not the full "
@@ -423,13 +441,13 @@ def show_whale_menu(chat, state):
          "Tracks up to 50 largest public positions per market. A leaderboard "
          "change is <b>not</b> proof of one trade or a human trader.\n\n"
          "Whale Alerts are ON by default. You can disable them here.",
-         keyboard=whale_keyboard(cfg))
+         keyboard=whale_keyboard(cfg), message_id=message_id)
 
 
-def whale_action(chat, action, state):
+def whale_action(chat, action, state, message_id=None):
     cfg = user(state, chat)
     if action == "back":
-        show_settings(chat, state)
+        show_settings(chat, state, message_id)
         return
     if action == "toggle":
         cfg["whale_enabled"] = not cfg.get("whale_enabled", True)
@@ -446,7 +464,7 @@ def whale_action(chat, action, state):
             else:
                 selected.add(band)
             cfg["whale_bands"] = [b for b in whale_alerts.BANDS if b in selected]
-    show_whale_menu(chat, state)
+    show_whale_menu(chat, state, message_id)
 
 
 def market_message(m, header, details):
@@ -463,7 +481,7 @@ def top_size_keyboard(selected):
           "callback_data": f"top:set:{n}"} for n in (5, 10)],
         [{"text": ("✅ " if n == selected else "") + f"Top {n}",
           "callback_data": f"top:set:{n}"} for n in (15, 20)],
-        [{"text": "🏠 Main Menu", "callback_data": "menu"}],
+        [{"text": "🏠 Main Menu", "callback_data": "hub:home"}],
     ]
 
 
@@ -477,6 +495,66 @@ def edit_bot_message(chat, message_id, text, keyboard):
         "disable_web_page_preview": True,
         "reply_markup": {"inline_keyboard": keyboard},
     })
+
+
+def ui_message(chat, text, keyboard, message_id=None):
+    """Telegram-native navigation: edit the same message instead of chat spam."""
+    if message_id is not None:
+        try:
+            edit_bot_message(chat, message_id, text, keyboard)
+            return
+        except urllib.error.HTTPError as exc:
+            # Old messages may be uneditable; use a new menu instead.
+            if exc.code != 400:
+                raise
+    send(chat, text, keyboard=keyboard)
+
+
+def show_page(chat, page, state, markets, message_id=None):
+    """Route new sections while preserving legacy buttons and commands."""
+    if page == "top":
+        top_menu(chat, state, message_id)
+        return
+    if page == "next":
+        now = time.time()
+        nearby = sorted(
+            (m for m in markets.values() if m.get("url") and m.get("close")
+             and m["close"] > now),
+            key=lambda m: m["close"])[:5]
+        if nearby:
+            content = "⏰ <b>NEXT KASH TRADING FREEZES</b>\n\n" + "\n\n".join(
+                "• <a href=\"" + html.escape(m["url"], quote=True) + "\">" +
+                html.escape(str(m["title"])[:100]) + "</a>\n" +
+                "⏳ About " + str(max(1, round((m["close"] - now) / 60))) + " min"
+                for m in nearby)
+        else:
+            content = "⏰ No upcoming tradable market freeze times are available."
+        ui_message(chat, content,
+                   [[{"text": "🏠 Main Menu", "callback_data": "hub:home"}]],
+                   message_id)
+        return
+    if page == "oldsettings":
+        show_settings(chat, state, message_id)
+        return
+    if page == "oldwhales":
+        show_whale_menu(chat, state, message_id)
+        return
+    if page == "news":
+        title, keyboard = kash_news.news_page(state, time.time())
+    elif page == "resolved":
+        title, keyboard = kash_news.resolved_page(state, http_json, time.time())
+    else:
+        title, keyboard = kash_hub.render(page, state, chat, markets, time.time())
+    ui_message(chat, title, keyboard, message_id)
+
+
+def hub_action(chat, value, state, markets, message_id=None):
+    cfg = user(state, chat)
+    cfg["awaiting_volume"] = False
+    page = kash_hub.action(chat, value, state, markets, time.time())
+    # Keep the original Whale Alert visible when following its trader.
+    show_page(chat, page, state, markets,
+              None if value.startswith("follow:") else message_id)
 
 
 def top_menu(chat, state, message_id=None):
@@ -535,7 +613,7 @@ def top_page_content(markets, limit, page):
         keyboard.append(nav)
     keyboard.append([{"text": "⚙️ Choose Top 5 / 10 / 15 / 20",
                       "callback_data": "top:choose"}])
-    keyboard.append([{"text": "🏠 Main Menu", "callback_data": "menu"}])
+    keyboard.append([{"text": "🏠 Main Menu", "callback_data": "hub:home"}])
     return text, keyboard
 
 
@@ -632,6 +710,34 @@ def show_whale_status(chat, state, markets):
          "<i>Snapshots are built gradually. This does not execute trades.</i>")
 
 
+def show_hub_status(chat, state, markets):
+    """Safe read-only diagnostics without a paid FadeHost terminal."""
+    cache = state.get("hub_market_cache", {})
+    news = state.get("hub_news", {})
+    prices = state.get("hub_prices", {})
+    results = state.get("hub_resolved", {})
+    def age(data):
+        t = data.get("checked_at") if isinstance(data, dict) else None
+        if not isinstance(t, (int, float)) or t <= 0:
+            return "Not yet"
+        return f"{max(0, int((time.time()-t)/60))} min ago"
+    market_cache = cache.get("data", {}) if isinstance(cache, dict) else {}
+    headlines = news.get("items", []) if isinstance(news, dict) else []
+    send(chat, "🟡 <b>KASH HUB STATUS</b>\n\n"
+         f"Live active markets: {len(markets)}\n"
+         f"Markets with public 24h data: {len(market_cache) if isinstance(market_cache, dict) else 0}\n"
+         f"Analytics cache checked: {age(cache)}\n"
+         f"Analytics error: {html.escape(str(cache.get('last_error') or 'None')) if isinstance(cache, dict) else 'Unknown'}\n"
+         f"Markets with price history: {len(prices) if isinstance(prices, dict) else 0}\n"
+         f"Official blog headlines cached: {len(headlines) if isinstance(headlines, list) else 0}\n"
+         f"Blog feed checked: {age(news)}\n"
+         f"Blog error: {html.escape(str(news.get('error') or 'None')) if isinstance(news, dict) else 'Unknown'}\n"
+         f"Resolved markets cached: {len(results.get('rows', [])) if isinstance(results,dict) else 0}\n"
+         "Daily digest and new-market alerts: opt-in.\n\n"
+         "<i>Read-only monitoring. Does not expose user IDs or secrets.</i>",
+         keyboard=[[{"text": "🏠 Main Menu", "callback_data": "hub:home"}]])
+
+
 def command(chat, text, state, markets):
     parts = text.strip().split()
     if not parts:
@@ -639,13 +745,22 @@ def command(chat, text, state, markets):
     name = parts[0].split("@")[0].lower()
     cfg = user(state, chat)
     if name == "/start":
-        send(chat, "👋 <b>Welcome to Verdigo Kash Alerts!</b>\n\n"
-             "Free Kash market monitoring: closing alerts, high volume and activity spikes.\n"
-             "No wallet or trading API key required.")
-        show_settings(chat, state)
-    elif name in ("/settings", "/help", "/menu", "/home"):
+        show_page(chat, "home", state, markets)
+    elif name in ("/menu", "/home", "/help"):
         cfg["awaiting_volume"] = False
+        show_page(chat, "home", state, markets)
+    elif name == "/settings":
+        cfg["awaiting_volume"] = False
+        show_page(chat, "alerts", state, markets)
+    elif name == "/legacysettings":
         show_settings(chat, state)
+    elif name in ("/analytics", "/news", "/about", "/watch", "/digest", "/results"):
+        target = {"/analytics": "analytics", "/news": "news",
+                  "/about": "about", "/watch": "watch",
+                  "/digest": "alerts", "/results": "resolved"}[name]
+        show_page(chat, target, state, markets)
+    elif name == "/hubstatus":
+        show_hub_status(chat, state, markets)
     elif name == "/ping":
         send(chat, "🏓 Pong! Verdigo Kash Alerts is responding.",
              keyboard=[[{"text": "🏠 Main Menu", "callback_data": "menu"}]])
@@ -705,7 +820,7 @@ def command(chat, text, state, markets):
              f"Alerts: {'paused' if cfg.get('paused') else 'active'}\n"
              "Closing alerts use the trade-freeze time from Kash.")
 
-def toggle(chat, action, state, markets):
+def toggle(chat, action, state, markets, message_id=None):
     cfg = user(state, chat)
     if action in ("15", "30", "60"):
         n = int(action)
@@ -722,7 +837,7 @@ def toggle(chat, action, state, markets):
         return
     elif action in ("menu", "home"):
         cfg["awaiting_volume"] = False
-    show_settings(chat, state)
+    show_settings(chat, state, message_id)
 
 def scan_subscriber(chat, cfg, state, markets, now, seen_volumes,
                     volume_baseline_ready):
@@ -837,6 +952,14 @@ def main():
                 state["last_market_error"] = None
                 scan(state, markets, now)
                 try:
+                    kash_hub.enhance_market_details(state, markets, http_json, now)
+                    kash_hub.record_prices(state, markets, now)
+                    kash_hub.poll_digest(state, markets, send, now)
+                    kash_news.poll(state, send, now)
+                    kash_hub.poll_new_markets(state, markets, send, now)
+                except Exception as exc:
+                    logging.warning("Kash Hub additional features skipped: %s", type(exc).__name__)
+                try:
                     whale_alerts.poll(state, markets, send, now=now)
                 except Exception as exc:
                     logging.warning("Whale scan skipped: %s", type(exc).__name__)
@@ -858,7 +981,8 @@ def main():
                     name = incoming.casefold()
                     if name in ("settings", "menu", "home"):
                         cfg["awaiting_volume"] = False
-                        show_settings(chat, state)
+                        show_page(chat, "home" if name != "settings" else "alerts",
+                                  state, markets)
                     elif name == "start":
                         cfg["awaiting_volume"] = False
                         command(chat, "/start", state, markets)
@@ -867,7 +991,7 @@ def main():
                     elif incoming.startswith("/"):
                         command(chat, incoming, state, markets)
                     elif not handle_volume_reply(chat, incoming, state):
-                        send(chat, "Use /settings to open the main menu.",
+                        send(chat, "Use /menu to open the main menu.",
                              keyboard=[[{"text": "🏠 Main Menu", "callback_data": "menu"}]])
                 callback = update.get("callback_query") or {}
                 if callback:
@@ -879,13 +1003,24 @@ def main():
                     if cb_chat:
                         user(state, cb_chat).pop("delivery_disabled", None)
                     if cb_chat and callback.get("data", "").startswith("toggle:"):
-                        toggle(cb_chat, callback["data"].split(":", 1)[1], state, markets)
+                        mid = (callback.get("message") or {}).get("message_id")
+                        toggle(cb_chat, callback["data"].split(":", 1)[1],
+                               state, markets, mid)
                     elif cb_chat and callback.get("data", "").startswith("vol:"):
-                        volume_action(cb_chat, callback["data"].split(":", 1)[1], state, markets)
+                        mid = (callback.get("message") or {}).get("message_id")
+                        volume_action(cb_chat, callback["data"].split(":", 1)[1],
+                                      state, markets, mid)
                     elif cb_chat and callback.get("data", "").startswith("whale:"):
-                        whale_action(cb_chat, callback["data"].split(":", 1)[1], state)
+                        mid = (callback.get("message") or {}).get("message_id")
+                        whale_action(cb_chat, callback["data"].split(":", 1)[1],
+                                     state, mid)
+                    elif cb_chat and callback.get("data", "").startswith("hub:"):
+                        mid = (callback.get("message") or {}).get("message_id")
+                        hub_action(cb_chat, callback["data"].split(":", 1)[1],
+                                   state, markets, mid)
                     elif cb_chat and callback.get("data") == "top":
-                        top_menu(cb_chat, state)
+                        mid = (callback.get("message") or {}).get("message_id")
+                        top_menu(cb_chat, state, mid)
                     elif cb_chat and callback.get("data", "").startswith("top:"):
                         msg_id = (callback.get("message") or {}).get("message_id")
                         if isinstance(msg_id, int):
@@ -896,7 +1031,15 @@ def main():
                     elif cb_chat and callback.get("data") == "menu":
                         cfg = user(state, cb_chat)
                         cfg["awaiting_volume"] = False
-                        show_settings(cb_chat, state)
+                        mid = (callback.get("message") or {}).get("message_id")
+                        markup = ((callback.get("message") or {}).get("reply_markup") or {})
+                        market_alert = any(
+                            any("url" in button for button in row)
+                            for row in markup.get("inline_keyboard", [])
+                        ) if isinstance(markup, dict) else False
+                        # Preserve actual alert text when its Main Menu button is tapped.
+                        show_page(cb_chat, "home", state, markets,
+                                  None if market_alert else mid)
             save(state)
         except urllib.error.HTTPError as exc:
             # HTTPError contains a URL with the BotFather token. Log only the
