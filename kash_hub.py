@@ -101,7 +101,7 @@ def about(page):
         keys+=[[button("📄 Official Team Page",url=TEAM_URL)],nav("about")]
         return text,keys
     if page=="funding":
-        text=("💰 <b>FUNDING & INVESTORS</b>\n\n"
+        text=("💰 <b>KASH FUNDING & INVESTORS</b>\n\n"
               "Announced: <b>$2,000,000 pre-seed</b>\n"
               "Date: <b>24 February 2026</b>\n\n"
               "Publicly named backers:\n")
@@ -109,7 +109,7 @@ def about(page):
         text+=("\n\n<i>$2M is the announced total round, not the investment "
                "by each individual firm. Per-investor amounts were not disclosed.</i>")
         return text,[[button("🔎 Funding Announcement",url=FUNDING_URL),
-                      button("📊 CryptoRank",url="https://cryptorank.io/")],nav("about")]
+                      button("📊 CryptoRank",url="https://cryptorank.io/ico/kash")],nav("about")]
     if page=="links":
         return ("🌐 <b>OFFICIAL KASH LINKS</b>\n\n"
                 "Quick access to the project and public communities.\n"
@@ -150,7 +150,7 @@ def enhance_market_details(state, markets, http_json, now):
     previous=cache.get("data",{})
     if not isinstance(previous,dict):
         previous={}
-    if now-cache.get("checked_at",0)>=CACHE_INTERVAL and markets:
+    if ("checked_at" not in cache or now-cache.get("checked_at",0)>=CACHE_INTERVAL) and markets:
         cache["checked_at"]=now
         result={}
         ids=[mid for mid in markets if is_uuid(mid)][:300]
