@@ -13,6 +13,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import whale_alerts
+import kash_hub
+import kash_news
 
 def load_private_credentials(path=None):
     """Optional private config for hosts that cannot add arbitrary env vars.
@@ -64,7 +66,9 @@ def defaults():
             "min_volume": 10000, "max_volume": None, "paused": False,
             "top_limit": 5, "whale_enabled": True,
             "whale_new": True, "whale_increase": True,
-            "whale_bands": list(whale_alerts.DEFAULT_BANDS)}
+            "whale_bands": list(whale_alerts.DEFAULT_BANDS),
+            "hub_digest_enabled": False, "hub_news_enabled": False,
+            "hub_watch_markets": [], "hub_watch_traders": []}
 
 def load():
     try:
@@ -132,7 +136,9 @@ def normalize(item):
             pass
     return {"id": market_id, "title": title, "close": close, "volume": volume,
             "url": url, "status": str(item.get("status") or "").upper(),
-            "tradeable": item.get("tradeable") is True}
+            "tradeable": item.get("tradeable") is True,
+            "category": str(item.get("category") or "")[:70],
+            "categoryLabel": str(item.get("category") or "")[:70]}
 
 def fetch_markets():
     if not KASH_KEY:
@@ -194,6 +200,13 @@ def enrich_with_market_state(markets):
                 mid = raw.get("id")
                 if mid not in markets:
                     continue
+                participant_count = raw.get("participantCount")
+                if (isinstance(participant_count, int) and not isinstance(participant_count, bool)
+                        and participant_count >= 0):
+                    markets[mid]["participant_count"] = participant_count
+                probability = numeric(raw.get("currentImpliedChance"))
+                if probability is not None and 0 <= probability <= 1:
+                    markets[mid]["implied_yes"] = probability
                 # Public batch state also tells us whether a market received trades.
                 # Absence means whale tracking skips that market safely.
                 trade_count = raw.get("tradeCount")
@@ -216,9 +229,11 @@ def send(chat, message, market=None, keyboard=None):
     data = {"chat_id": chat, "text": message, "parse_mode": "HTML",
             "disable_web_page_preview": True}
     if market and market.get("url"):
-        data["reply_markup"] = {"inline_keyboard": [
-            [{"text": "🔗 View Market on Kash", "url": market["url"]}],
-            [{"text": "🏠 Main Menu", "callback_data": "menu"}]]}
+        rows = [[{"text": "🔗 View Market on Kash", "url": market["url"]}]]
+        if keyboard:
+            rows.extend(keyboard)
+        rows.append([{"text": "🏠 Main Menu", "callback_data": "menu"}])
+        data["reply_markup"] = {"inline_keyboard": rows}
     elif keyboard:
         data["reply_markup"] = {"inline_keyboard": keyboard}
     telegram("sendMessage", data)
